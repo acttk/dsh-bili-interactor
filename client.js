@@ -151,6 +151,27 @@ window.__ModuleLoader__.load({
         return () => clearInterval(t)
       }, [load])
 
+      // 进来先问一句「上次那张码还在吗」——在的话直接接着等，不用你重扫
+      React.useEffect(() => {
+        let alive = true
+        ;(async () => {
+          try {
+            const r = await fetch(API + '/login/pending', { credentials: 'same-origin' })
+            const j = await r.json()
+            if (!alive || !j || !j.pending) return
+            setLogin({
+              img: j.image || '',
+              state: j.state || 'scan',
+              hint: j.image
+                ? `这张码还有 ${j.leftSec} 秒有效，扫完在手机上点「确认登录」`
+                : '上次那张码还在，但图片没了，点「重新生成」换一张',
+              name: '',
+            })
+          } catch { /* 没 pending 就算了 */ }
+        })()
+        return () => { alive = false }
+      }, [])
+
       React.useEffect(() => {
         if (!st || !st.run || !st.run.running) return undefined
         const t = setInterval(() => tick((n) => n + 1), 1000)
@@ -222,6 +243,18 @@ window.__ModuleLoader__.load({
       }
 
       // 二维码显示着的时候，每 2 秒问一次「扫了没」
+      // 后端自己会轮询登录（不依赖这个页面开着），这里只负责把结果反映出来
+      React.useEffect(() => {
+        if (!st) return
+        if (st.loggedIn && login.state !== 'done') {
+          setLogin({ img: '', state: 'done', hint: '登录成功', name: st.loginName || '' })
+          setMsg('登录成功' + (st.loginName ? '：' + st.loginName : ''))
+        }
+        if (!st.loggedIn && st.loginState === 'done' && !login.state) {
+          setLogin({ img: '', state: 'done', hint: '登录成功', name: st.loginName || '' })
+        }
+      }, [st && st.loggedIn, st && st.loginState])
+
       React.useEffect(() => {
         if (!login.img || login.state === 'done') return undefined
         let alive = true
