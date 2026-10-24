@@ -94,21 +94,48 @@ await new Promise((res) => setTimeout(res, 40))   // 等 load() 落定
 slot = 0
 const tree = ViewFn()                      // 这次有数据
 
-const texts = []
-const walk = (n) => {
-  if (n == null) return
-  if (Array.isArray(n)) return n.forEach(walk)
-  if (typeof n === 'string' || typeof n === 'number') return texts.push(String(n))
-  // 函数组件（比如 Stat）：递归展开它的 props 和渲染结果
-  if (typeof n.tag === 'function') {
-    try { walk(n.tag(n.props || {})) } catch { /* 展开不了就算了 */ }
-    return
+const collect = (t) => {
+  const out = []
+  const walk = (n) => {
+    if (n == null) return
+    if (Array.isArray(n)) return n.forEach(walk)
+    if (typeof n === 'string' || typeof n === 'number') return out.push(String(n))
+    if (typeof n.tag === 'function') {
+      try { walk(n.tag(n.props || {})) } catch { /* 展开不了就算了 */ }
+      return
+    }
+    if (n.props) for (const v of Object.values(n.props)) if (typeof v === 'string') out.push(v)
+    if (n.children) n.children.forEach(walk)
   }
-  if (n.props) for (const v of Object.values(n.props)) if (typeof v === 'string') texts.push(v)
-  if (n.children) n.children.forEach(walk)
+  walk(t)
+  return out
 }
-walk(tree)
 
+/* ——— 未登录：必须看得见登录入口 ——— */
+state.loggedIn = false
+store.clear(); slot = 0
+ViewFn()                                   // 第一帧 st=null，触发 load()
+await new Promise((res) => setTimeout(res, 40))
+slot = 0
+const t1 = collect(ViewFn())                // 第二帧才有数据
+for (const want of ['先登录 B站', '扫码登录', '凭证只存在这台电脑']) {
+  if (!t1.some((x) => x.includes(want))) throw new Error('未登录时看不到「' + want + '」，实际渲染出 ' + t1.length + ' 个文本节点：' + t1.slice(0, 12).join(' | '))
+}
+if (t1.some((x) => x.includes('退出登录'))) throw new Error('没登录却显示了「退出登录」')
+console.log('OK  未登录：登录卡正常（' + t1.length + ' 个文本节点）')
+
+/* ——— 已登录：显示退出，不再要求扫码 ——— */
+state.loggedIn = true
+store.clear(); slot = 0
+ViewFn()
+await new Promise((res) => setTimeout(res, 40))
+slot = 0
+const t2 = collect(ViewFn())
+if (!t2.some((x) => x.includes('退出登录'))) throw new Error('已登录时看不到「退出登录」')
+if (t2.some((x) => x.includes('扫码登录'))) throw new Error('已登录却还让扫码')
+console.log('OK  已登录：显示退出登录、不再显示扫码')
+
+const texts = t2
 for (const want of ['B站互动', '总览', '互动', '过程', '设置', '今天动了几次', '还剩额度']) {
   if (!texts.some((x) => x.includes(want))) throw new Error('渲染结果里没有「' + want + '」')
 }

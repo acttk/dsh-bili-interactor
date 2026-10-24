@@ -131,6 +131,7 @@ window.__ModuleLoader__.load({
       const [tab, setTab] = React.useState('overview')
       const [busy, setBusy] = React.useState('')
       const [msg, setMsg] = React.useState('')
+      const [login, setLogin] = React.useState({ img: '', state: '', hint: '', name: '' })
       const [, tick] = React.useState(0)
 
       const load = React.useCallback(async () => {
@@ -192,6 +193,57 @@ window.__ModuleLoader__.load({
         } finally { setBusy('') }
       }
 
+      /* ── 登录 ── */
+      const startLogin = async () => {
+        setBusy('login')
+        setLogin({ img: '', state: 'loading', hint: '正在生成二维码…', name: '' })
+        try {
+          const j = await post('/login/qr')
+          if (j && j.ok && j.image) {
+            setLogin({ img: j.image, state: 'wait', hint: '用 B站 App 扫这张码，然后在手机上点「确认登录」', name: '' })
+          } else {
+            setLogin({ img: '', state: 'error', hint: (j && j.error) || '生成失败', name: '' })
+          }
+        } catch (e) {
+          setLogin({ img: '', state: 'error', hint: '请求失败：' + e, name: '' })
+        } finally { setBusy('') }
+      }
+
+      const doLogout = async () => {
+        setBusy('logout')
+        try {
+          await post('/logout')
+          setLogin({ img: '', state: '', hint: '', name: '' })
+          setMsg('已退出登录')
+          load()
+        } catch (e) {
+          setMsg('退出失败：' + e)
+        } finally { setBusy('') }
+      }
+
+      // 二维码显示着的时候，每 2 秒问一次「扫了没」
+      React.useEffect(() => {
+        if (!login.img || login.state === 'done') return undefined
+        let alive = true
+        const t = setInterval(async () => {
+          try {
+            const r = await fetch(API + '/login/poll', { credentials: 'same-origin' })
+            const j = await r.json()
+            if (!alive) return
+            if (j && j.done) {
+              setLogin({ img: '', state: 'done', hint: '登录成功', name: j.name || '' })
+              setMsg('登录成功：' + (j.name || j.uid || ''))
+              load()
+            } else if (j && j.state === 'timeout') {
+              setLogin((s) => ({ ...s, state: 'timeout', hint: '二维码过期了，重新生成一张' }))
+            } else if (j && j.state === 'conf') {
+              setLogin((s) => ({ ...s, state: 'conf', hint: '扫到了，等你在手机上点确认' }))
+            }
+          } catch { /* 轮询失败就下一轮再试 */ }
+        }, 2000)
+        return () => { alive = false; clearInterval(t) }
+      }, [login.img, login.state])
+
       const patch = async (kv, note) => {
         // 本地先改，界面立刻反应；再落盘
         setSt((s) => (s ? { ...s, config: { ...s.config, ...kv } } : s))
@@ -221,8 +273,53 @@ window.__ModuleLoader__.load({
           ? `第 ${run.progress.index}/${run.progress.total} 条 · ` : '') + fmtDur(elapsed)
         : (run.error ? '上次出错' : '空闲')
 
+      const loggedIn = !!st.loggedIn
+
+      /* ── 登录卡：没登录时必须先看到它，不然点「跑一轮」只会收到一句报错 ── */
+      const loginCard = h('div', { 'data-bi-card': '', style: loggedIn ? null : { borderColor: 'rgba(251,191,36,.45)' } },
+        h('div', { 'data-bi-h2': '' }, loggedIn ? '账号' : '先登录 B站'),
+        !loggedIn && !login.img
+          ? h('div', null,
+            h('div', { 'data-bi-note': '', style: { marginBottom: 12, fontSize: 12.5, lineHeight: 1.7 } },
+              '点赞、投币、弹幕都记在账号上，所以得先知道你用的是谁。点下面的按钮出二维码，用 B站 手机 App 扫一下、手机上点「确认登录」就行。凭证只存在这台电脑的 ~/.dsh/bili-interactor/ 里，不上传任何地方。'),
+            h('button', {
+              'data-bi-btn': '', 'data-variant': 'primary', disabled: busy === 'login', onClick: startLogin,
+            }, busy === 'login' ? '正在生成…' : '扫码登录'),
+            h('div', { 'data-bi-msg': '' }, login.hint))
+          : null,
+
+        // 二维码
+        login.img
+          ? h('div', { style: { display: 'flex', gap: 18, alignItems: 'flex-start', flexWrap: 'wrap' } },
+            h('img', {
+              src: login.img, alt: '登录二维码', width: 176, height: 176,
+              style: { borderRadius: 10, background: '#fff', padding: 8, flex: '0 0 auto' },
+            }),
+            h('div', { style: { flex: '1 1 220px', minWidth: 200 } },
+              h('div', { 'data-bi-note': '', style: { fontSize: 12.5, lineHeight: 1.8 } }, login.hint),
+              h('div', { 'data-bi-note': '', style: { marginTop: 10 } },
+                login.state === 'wait' ? '每 2 秒自动检查一次…' :
+                login.state === 'conf' ? '手机点了确认就成功了' :
+                login.state === 'timeout' ? '过期了就点下面重新生成' : ''),
+              h('div', { style: { marginTop: 12, display: 'flex', gap: 8 } },
+                h('button', { 'data-bi-btn': '', 'data-variant': 'ghost', onClick: startLogin }, '重新生成'))))
+          : null,
+
+        // 已登录
+        loggedIn && !login.img
+          ? h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' } },
+            h('div', null,
+              h('div', { 'data-bi-lab': '', style: { fontSize: 13.5 } },
+                login.name ? login.name : '已登录'),
+              h('div', { 'data-bi-note': '' }, '凭证在本机，随时可以退出')),
+            h('button', {
+              'data-bi-btn': '', 'data-variant': 'ghost', disabled: busy === 'logout', onClick: doLogout,
+            }, busy === 'logout' ? '退出中…' : '退出登录'))
+          : null)
+
       /* ── 总览 ── */
       const overview = h('div', null,
+        loginCard,
         h('div', { 'data-bi-card': '' },
           h('div', { 'data-bi-h2': '' }, '今天'),
           h('div', { 'data-bi-grid': '' },

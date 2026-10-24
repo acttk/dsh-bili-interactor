@@ -8,6 +8,52 @@
 
 ---
 
+## 第一次用：先扫码登录
+
+装完之后打开 **设置 → B站互动**，第一眼看到的就是登录卡：
+
+```
+┌─────────────────────────────────────────────┐
+│ 先登录 B站                                   │
+│ 点赞、投币、弹幕都记在账号上，所以得先知道你  │
+│ 用的是谁。点下面按钮出二维码，用 B站 手机 App │
+│ 扫一下、手机上点「确认登录」。凭证只存在这台  │
+│ 电脑的 ~/.dsh/bili-interactor/ 里，不上传。   │
+│                                             │
+│ [ 扫码登录 ]                                 │
+└─────────────────────────────────────────────┘
+```
+
+点了之后：
+
+1. 页面里直接出现二维码（不用切窗口、不用手机助手）
+2. 手机 B站 App → 右上角扫一扫 → 扫它
+3. 手机上点「确认登录」
+4. 面板每 2 秒自己查一次，成功后变成「已登录 + 退出登录」
+
+**没有独立网页、没有端口、没有地址要记。** 二维码直接在设置页里显示。
+
+登录态存在 `~/.dsh/bili-interactor/credential.json`。
+如果之前装过 `dsh-bili-scroll`（刷视频那个），它会把 `~/.dsh/bili-duty/bili_credential.json` 当备用凭证直接用 —— **不用重登**。
+
+### 扫码登录是怎么实现的
+
+不用 `bilibili_api.QrCodeLogin`：它把 `qrcode_key` 藏在私有属性里，
+一个进程生成的码另一个进程查不了状态；而「重新生成」还会换一张新码，让手机上扫的那张作废。
+
+自己按同一套接口走：
+
+```
+GET passport.bilibili.com/x/passport-login/web/qrcode/generate   → url + qrcode_key
+GET passport.bilibili.com/x/passport-login/web/qrcode/poll?qrcode_key=…
+      code: 86101 未扫 / 86090 已扫待确认 / 86038 过期 / 0 成功
+成功时 cookie 在返回的 url 查询串里：SESSDATA / bili_jct / DedeUserID / refresh_token
+```
+
+宿主把 `qrcode_key` 存在内存里，poll 时带回去 —— **始终是同一张码**。
+
+---
+
 ## 它跟「刷B站」有什么不一样
 
 | | dsh-bili-scroll（刷视频） | **dsh-bili-interactor（本插件）** |
@@ -46,11 +92,12 @@
 │  · 记账（ledger.jsonl）、算额度（daily.json）│
 │  · 挂 /api/bili-interactor/* 给面板用        │
 └──────────────────┬──────────────────────────┘
-                   │ spawn + JSON
+                   │ spawn + JSON（只传数据，不传文件）
 ┌──────────────────▼──────────────────────────┐
 │ 执行器 py/interact.py                        │
-│  · whoami / search / info / act / run / comment │
-│  · 用 bilibili_api 真调 B站 接口             │
+│  · login / login-poll / whoami / search      │
+│  · info / act / run / comment                │
+│  · 用 bilibili_api 和 passport 真调 B站 接口 │
 │  · 只干活不判断，失败返回 {"ok":false} 不抛栈 │
 └──────────────────┬──────────────────────────┘
                    │ HTTPS + cookie
@@ -64,29 +111,31 @@
 动作要确定性、要重试、要一个明确的 error code，那是 Python + `bilibili_api` 的活。
 中间用 JSON 对话，两边都能单独跑、单独测。
 
+**为什么写盘全在 Node 那边**：
+DSH 会在沙箱里跑子进程，`~/.dsh/<插件名>` 这类目录子进程往往写不进去。
+所以 python 只负责联网取数据，`credential.json` / `qr.png` / 账本一律由宿主写 ——
+这条边界被 `tests/test_login.py` 钉死了（它监视每一次写盘尝试，有就失败）。
+
 ---
 
 ## 安装
 
 ```bash
-# 1. 装依赖（复用「刷B站」插件的 venv）
-#    bilibili-api-python 已经在那个 venv 里了，没有的话：
-~/.dsh/bili-duty/.venv/Scripts/pip install bilibili-api-python
+# 1. 依赖（复用「刷B站」插件的 venv）
+~/.dsh/bili-duty/.venv/Scripts/pip install bilibili-api-python httpx qrcode pillow
 
-# 2. 装插件（本地链接方式）
+# 2. 装插件
 cd ~/.dsh/profiles/desktop
 pnpm add link:<本仓库路径>
 
-# 3. 让 profile 认识它
-#    在 cordis.patch.yml 末尾追加：
+# 3. 让 profile 认识它（cordis.patch.yml 末尾）
 #    - insert:
 #        - id: bili-interactor
 #          name: dsh-bili-interactor
 ```
 
 然后**重启 DSH**（客户端 bundle 是启动时建图的，光刷新页面不够）。
-
-登录：用「刷B站」插件扫码登录一次即可，凭证是共用的。
+重启后打开设置，登录卡会直接让你扫码。
 
 ---
 
@@ -97,6 +146,9 @@ pnpm add link:<本仓库路径>
 ```bash
 PY=~/.dsh/bili-duty/.venv/Scripts/python
 
+$PY py/interact.py login                          # 出二维码 base64
+$PY py/interact.py login-poll --key <qrcode_key>   # 查扫码状态
+$PY py/interact.py logout
 $PY py/interact.py whoami
 $PY py/interact.py search --keyword 恐怖游戏 --order click --limit 10
 $PY py/interact.py info   --bvid BV1xxxxxxx
@@ -104,6 +156,9 @@ $PY py/interact.py act    --bvid BV1xxxxxxx --like --coin 1 --danmaku "这波可
 $PY py/interact.py run    --plan plan.json
 $PY py/interact.py comment --bvid BV1xxxxxxx --text "……"
 ```
+
+> 命令行下 `login` 只吐 base64，看图自己解码：
+> `... | jq -r .image | sed 's/^data:image\/png;base64,//' | base64 -d > qr.png`
 
 全部输出 JSON：
 
@@ -141,20 +196,34 @@ $PY py/interact.py comment --bvid BV1xxxxxxx --text "……"
 
 ```
 ~/.dsh/bili-interactor/
-├── config.json     配置
-├── ledger.jsonl    一行一个动作，append-only（好查、好删、好对账）
-├── daily.json      当日计数（额度靠它）
-├── live.md         过程实录（面板直接读这个）
-└── interact.log    运行日志
+├── credential.json  登录凭证（含 SESSDATA，别外传）
+├── qr.png           当前二维码（登录成功后自动删）
+├── config.json      配置
+├── ledger.jsonl     一行一个动作，append-only（好查、好删、好对账）
+├── daily.json       当日计数（额度靠它）
+├── live.md          过程实录（面板直接读这个）
+└── interact.log     运行日志
 ```
 
 `ledger.jsonl` 里每一行长这样：
 
 ```json
-{"ts":"2026-10-24T12:00:00.000Z","kind":"like","ok":true,"bvid":"BV1xxx","title":"…","up":"…"}
+{"ts":"2026-10-25T01:00:00.000Z","kind":"like","ok":true,"bvid":"BV1xxx","title":"…","up":"…"}
 ```
 
 **先记账再发**：发失败的那条也会留下 `ok:false` 和错误码，所以对得上账。
+
+---
+
+## 测试
+
+```bash
+node smoke.mjs                # 客户端：骨架、登录卡（未登录/已登录两态）、四页签渲染
+node smoke-host.mjs           # 宿主：路由、state/config、未登录拦截、额度上限、总开关
+python tests/test_login.py    # 登录链路：状态机、cookie 解析、不写盘的架构边界
+```
+
+`tests/test_login.py` 会监视每一次写盘尝试，断言 py 这半边**一次都没写** —— 这是架构约束，不是风格偏好。
 
 ---
 
@@ -165,6 +234,7 @@ $PY py/interact.py comment --bvid BV1xxxxxxx --text "……"
 - **风控存在**。短时间的密集写操作会被限流（返回 `-412` / `-352`），届时这一轮会记 failed 并停下。
 - **没有定时任务**。只有手动「现在跑一轮」。要不要加 cron 由你自己决定 ——
   涉及写操作的自动化，我倾向于让你每次都亲手按一下。
+- **凭证是明文 cookie**。跟所有这类工具一样，`credential.json` 拿到就等于拿到你的登录态，别提交进仓库（`.gitignore` 已排除）。
 
 ---
 

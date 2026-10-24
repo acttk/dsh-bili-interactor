@@ -11,6 +11,9 @@ dsh-bili-interactor —— B站 互动执行器
     · 中间用 JSON 说话，谁都能单独测
 
 用法：
+    python interact.py login                         # 生成登录二维码
+    python interact.py login-poll                    # 查扫码状态（不换码）
+    python interact.py logout                        # 删掉本插件凭证
     python interact.py whoami
     python interact.py search --keyword 恐怖游戏 --order click --limit 10
     python interact.py info  --bvid BV1xxx
@@ -21,7 +24,8 @@ dsh-bili-interactor —— B站 互动执行器
 约定：
     · 结果一律打成 JSON 到 stdout：{"ok": bool, ...}
     · 失败不抛栈，返回 {"ok": false, "error": "...", "code": ...}
-    · 凭证从 ~/.dsh/bili-duty/bili_credential.json 读（跟刷视频那个插件共用一套登录）
+    · 自己那份凭证在 ~/.dsh/bili-interactor/credential.json；
+      没有的话退回 ~/.dsh/bili-duty/bili_credential.json（跟刷视频插件共用）
     · bilibili_api 17.x 的接口**几乎全是 async**，所以整个脚本跑在 asyncio 上
 """
 from __future__ import annotations
@@ -38,6 +42,12 @@ from pathlib import Path
 HOME = Path(os.environ.get("BILI_DUTY_HOME") or (Path.home() / ".dsh" / "bili-duty"))
 CRED_FILE = HOME / "bili_credential.json"
 
+# ⭐ 自己的家目录：凭证优先存在这儿 —— 本插件不依赖别的插件
+OWN_HOME = Path(os.environ.get("BILI_INTERACTOR_HOME") or (Path.home() / ".dsh" / "bili-interactor"))
+OWN_CRED = OWN_HOME / "credential.json"
+QR_CACHE = OWN_HOME / "qr.png"
+LOGIN_STATE = OWN_HOME / "login.json"
+
 
 def out(obj):
     """统一出口：JSON + 刷新（被管道读时不至于卡住）。"""
@@ -50,24 +60,61 @@ def fail(msg, **extra):
     raise SystemExit(0)
 
 
-def load_credential():
-    """把 json 里的四个 cookie 拼成 bilibili_api 的 Credential。"""
-    from bilibili_api import Credential
-
-    if not CRED_FILE.exists():
-        fail(f"没有凭证文件：{CRED_FILE}", hint="先用 dsh-bili-scroll 扫码登录一次")
+def _ensure_own_home():
     try:
-        raw = json.loads(CRED_FILE.read_text(encoding="utf-8-sig"))
-    except Exception as e:
-        fail(f"凭证文件读不出来：{e}")
+        OWN_HOME.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+
+
+def _raw_from(path: Path):
+    try:
+        return json.loads(path.read_text(encoding="utf-8-sig"))
+    except Exception:
+        return None
+
+
+def _cred_from(raw: dict):
+    """三个 cookie 拼成 Credential；缺关键项返回 None。"""
+    from bilibili_api import Credential
 
     sess = raw.get("sessdata") or raw.get("SESSDATA") or ""
     jct = raw.get("bili_jct") or raw.get("BILI_JCT") or ""
     buvid = raw.get("buvid3") or raw.get("BUVID3") or ""
     uid = raw.get("dedeuserid") or raw.get("DedeUserID") or raw.get("dedeUserID") or ""
     if not sess or not jct:
-        fail("凭证里缺 SESSDATA 或 bili_jct", hint="重新扫码登录")
+        return None
     return Credential(sessdata=sess, bili_jct=jct, buvid3=buvid, dedeuserid=str(uid) or None)
+
+
+def credential_paths():
+    """先自己的，再退回共用的（老用户已经扫码过，不该让他重登）。"""
+    return [OWN_CRED, CRED_FILE]
+
+
+def find_credential():
+    """返回 (cred, path) 或 (None, None)。"""
+    for p in credential_paths():
+        if not p.exists():
+            continue
+        raw = _raw_from(p)
+        if not raw:
+            continue
+        c = _cred_from(raw)
+        if c:
+            return c, p
+    return None, None
+
+
+def load_credential():
+    cred, _ = find_credential()
+    if cred is None:
+        fail(
+            "还没登录 B站",
+            hint="在设置页「B站互动」里点「扫码登录」，或者命令行跑 interact.py login",
+            needLogin=True,
+        )
+    return cred
 
 
 def video_obj(bvid, cred):
@@ -103,7 +150,169 @@ def brief(info: dict) -> dict:
     }
 
 
-# ─────────────────────────── 子命令 ───────────────────────────
+# ─────────────────────────── 扫码登录 ───────────────────────────
+#
+# ⚠️ 这里不用 bilibili_api 的 QrCodeLogin：它把 qrcode_key 藏在私有属性里，
+#    一个进程生成的码，另一个进程查不了状态；而「重新生成」会换一张新码，
+#    用户手机上扫的那张立刻作废。
+#    ⇒ 自己按同一套接口走：qr 那步把 key 写文件，poll 那步带着同一个 key 去问。
+#
+#      GET passport.bilibili.com/x/passport-login/web/qrcode/generate → url + qrcode_key
+#      GET passport.bilibili.com/x/passport-login/web/qrcode/poll?qrcode_key=…
+#          code: 86101 未扫 / 86090 已扫待确认 / 86038 过期 / 0 成功
+
+
+def _ua_headers():
+    return {"User-Agent": "Mozilla/5.0", "Referer": "https://www.bilibili.com/"}
+
+
+def _qr_png(url: str) -> bytes:
+    """把扫码链接画成 PNG（qrcode 是 bilibili_api 的依赖，肯定装得上）。"""
+    import io
+
+    import qrcode
+
+    qr = qrcode.QRCode(border=2, box_size=8)
+    qr.add_data(url)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+async def cmd_login(args):
+    """
+    ⚠️ 只**取**二维码，不写盘 —— 写盘交给宿主。
+       原因：DSH 会在沙箱里跑子进程，`~/.dsh/<插件名>` 往往不可写
+       （只有名单里的目录能写）。把 IO 留给不受限的宿主，谁都别踩坑。
+    """
+    import base64
+
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.get(
+                "https://passport.bilibili.com/x/passport-login/web/qrcode/generate",
+                headers=_ua_headers(),
+            )
+            j = r.json()
+    except Exception as e:
+        fail(f"取二维码失败（网络）：{e}")
+
+    if j.get("code") != 0:
+        fail(f"取二维码失败：{j.get('message')}", code=j.get("code"))
+
+    data = j.get("data") or {}
+    url = data.get("url") or ""
+    key = data.get("qrcode_key") or ""
+    if not url or not key:
+        fail("B站 没给 url 或 qrcode_key")
+
+    try:
+        png = _qr_png(url)
+    except Exception as e:
+        fail(f"画二维码失败：{e}")
+
+    out({
+        "ok": True,
+        "image": "data:image/png;base64," + base64.b64encode(png).decode("ascii"),
+        "qrcodeKey": key,
+        "at": int(time.time()),
+        "expiresInSec": 180,
+        "howto": "用 B站 App 扫这张码，然后在手机上点「确认登录」",
+    })
+
+
+async def cmd_login_poll(args):
+    """
+    带着 key 去问状态。key 由宿主通过 --key 传进来（不读盘，省一次权限坑）。
+    state: scan / conf / timeout / done；done 时把 cookie payload 一起吐出来，宿主落盘。
+    """
+    import httpx
+
+    key = (args.key or "").strip()
+    if not key:
+        fail("没有 qrcode_key", hint="先点一次「扫码登录」重新生成")
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.get(
+                "https://passport.bilibili.com/x/passport-login/web/qrcode/poll",
+                params={"qrcode_key": key, "source": "main-fe-header"},
+                headers=_ua_headers(),
+            )
+            j = r.json()
+    except Exception as e:
+        fail(f"查状态失败（网络）：{e}")
+
+    if j.get("code") != 0:
+        fail(f"查状态失败：{j.get('message')}", code=j.get("code"))
+
+    d = j.get("data") or {}
+    code = d.get("code")
+    if code == 86101:
+        out({"ok": True, "done": False, "state": "scan", "hint": "还没扫"})
+        return
+    if code == 86090:
+        out({"ok": True, "done": False, "state": "conf", "hint": "扫到了，等你在手机上点确认"})
+        return
+    if code == 86038:
+        out({"ok": True, "done": False, "state": "timeout", "hint": "二维码过期了，重新生成一张"})
+        return
+    if code != 0:
+        fail(f"未知状态 {code}：{d.get('message')}")
+
+    # 成功：B站 把 cookie 塞在返回的 url 里
+    cred_url = d.get("url") or ""
+    if not cred_url:
+        fail("登录成功但没拿到回调 url")
+
+    from urllib.parse import parse_qs, urlparse
+
+    qs = parse_qs(urlparse(cred_url).query)
+    payload = {
+        "sessdata": (qs.get("SESSDATA") or [""])[0],
+        "bili_jct": (qs.get("bili_jct") or [""])[0],
+        "buvid3": (qs.get("buvid3") or [""])[0],
+        "dedeuserid": (qs.get("DedeUserID") or [""])[0],
+        "ac_time_value": d.get("refresh_token") or "",
+        "savedAt": time.strftime("%Y-%m-%dT%H:%M:%S"),
+    }
+    if not payload["sessdata"] or not payload["bili_jct"]:
+        fail("登录成功但 cookie 不完整，重试一次")
+
+    # 确认这个 cookie 真有权限
+    from bilibili_api import user
+
+    me = await user.get_self_info(credential=_cred_from(payload))
+    dd = me.get("data") if isinstance(me.get("data"), dict) else (me or {})
+    out({
+        "ok": True,
+        "done": True,
+        "state": "done",
+        "credential": payload,       # ← 宿主负责写盘
+        "uid": dd.get("mid"),
+        "name": dd.get("name") or dd.get("uname"),
+        "level": dd.get("level"),
+        "coins": dd.get("coins"),
+    })
+
+
+async def cmd_logout(args):
+    """
+    只报告「应该删哪几个文件」，实际删除交给宿主。
+    （沙箱里的子进程删不动 ~/.dsh/<插件名>，别让它白试。）
+    """
+    out({
+        "ok": True,
+        "shouldRemove": [str(OWN_CRED), str(LOGIN_STATE), str(QR_CACHE)],
+        "hint": "已退出登录",
+    })
+
+
+# ─────────────────────────── 其它子命令 ───────────────────────────
 
 async def cmd_whoami(args):
     cred = load_credential()
@@ -352,6 +561,10 @@ def build_parser():
     sub = p.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("whoami")
+    sub.add_parser("login")          # 生成二维码（不写盘）
+    lp = sub.add_parser("login-poll")  # 查扫码状态（key 由宿主传）
+    lp.add_argument("--key", required=False, default="")
+    sub.add_parser("logout")         # 删掉本插件的凭证
 
     s = sub.add_parser("search")
     s.add_argument("--keyword", required=True)
@@ -377,6 +590,9 @@ def build_parser():
 
 CMDS = {
     "whoami": cmd_whoami,
+    "login": cmd_login,
+    "login-poll": cmd_login_poll,
+    "logout": cmd_logout,
     "search": cmd_search,
     "act": cmd_act,
     "info": cmd_info,

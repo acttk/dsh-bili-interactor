@@ -1,4 +1,4 @@
-node_modules/
+﻿node_modules/
 *.log
 .DS_Store
 .env
@@ -10,3 +10,8 @@ daily.json
 live.md
 interact.log
 bili_credential.json
+
+# Python
+__pycache__/
+*.pyc
+

@@ -4,6 +4,8 @@
 //   3) /run 在没有登录/没有额度时给出可读的拒绝理由，而不是崩
 // 注意：这里不打真 B站 接口 —— 只测接线。
 process.env.BILI_INTERACTOR_HOME = process.env.TEMP + '\\bi-smoke-home'
+// 把 DSH_HOME 也指到空目录，否则会退回真机那份 bili-duty 凭证，测不出「未登录」
+process.env.DSH_HOME = process.env.TEMP + '\\bi-smoke-dsh'
 
 const { rmSync } = await import('node:fs')
 try { rmSync(process.env.BILI_INTERACTOR_HOME, { recursive: true, force: true }) } catch {}
@@ -76,7 +78,31 @@ const patched = await call('POST', '/api/bili-interactor/config', { maxActionsPe
 if (!patched.json.ok || patched.json.config.maxActionsPerRun !== 7) throw new Error('配置写不进去')
 console.log('OK  patch config: maxActionsPerRun=' + patched.json.config.maxActionsPerRun)
 
-// 额度为 0 时 /run 应该给出可读理由（这里把每日上限改成 0 再调）
+/* ── 未登录时 /run 必须拦住并告诉前端去登录 ── */
+const runNoLogin = await call('POST', '/api/bili-interactor/run')
+if (runNoLogin.json.started !== false) throw new Error('没登录却跑起来了')
+if (!runNoLogin.json.needLogin) throw new Error('没登录时该给 needLogin 标记')
+console.log('OK  run(未登录) 正确拦截: ' + runNoLogin.json.error)
+
+const st2 = await call('GET', '/api/bili-interactor/state')
+if (typeof st2.json.loggedIn !== 'boolean') throw new Error('state 里没有 loggedIn')
+if (st2.json.loggedIn !== false) throw new Error('临时 home 没凭证，loggedIn 该是 false')
+console.log('OK  state.loggedIn=false（未登录态正确）')
+
+const me0 = await call('GET', '/api/bili-interactor/me')
+if (me0.json.needLogin !== true) throw new Error('未登录时 /me 该给 needLogin')
+console.log('OK  GET /me 未登录: ' + me0.json.error)
+
+/* ── 造一份假凭证，好继续测额度/开关两条护栏（不会真发请求：后面都会先被拦） ── */
+const { mkdirSync, writeFileSync } = await import('node:fs')
+const credFile = process.env.BILI_INTERACTOR_HOME + '\\credential.json'
+mkdirSync(process.env.BILI_INTERACTOR_HOME, { recursive: true })
+writeFileSync(credFile, JSON.stringify({ sessdata: 'x', bili_jct: 'y', buvid3: 'z', dedeuserid: '1' }), 'utf8')
+const st3 = await call('GET', '/api/bili-interactor/state')
+if (st3.json.loggedIn !== true) throw new Error('放了凭证却还说没登录')
+console.log('OK  state.loggedIn=true（有凭证就认）')
+
+// 额度为 0 时 /run 应该给出可读理由
 await call('POST', '/api/bili-interactor/config', { maxActionsPerDay: 0 })
 const run0 = await call('POST', '/api/bili-interactor/run')
 if (run0.json.started !== false) throw new Error('额度为 0 却返回 started=true（骗人）')
