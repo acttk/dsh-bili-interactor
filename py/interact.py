@@ -378,6 +378,67 @@ async def cmd_search(args):
     out({"ok": True, "keyword": args.keyword, "order": args.order, "count": len(items), "items": items[: args.limit]})
 
 
+async def cmd_recall_danmaku(args):
+    """
+    撤回自己发过的弹幕。
+
+    ⚠️ bilibili_api 里那个 recall_danmaku 用的是 `GET /x/dm/recall`，B站 已经改成
+       **POST** 了 —— 照它调会拿到 405 Method Not Allowed。这里直接走正确的写法。
+       接口回 {"code":0,"message":"撤回成功，你还有 N 次撤回机会"}。
+    """
+    import httpx
+
+    cred, _ = find_credential()
+    if cred is None:
+        fail("还没登录 B站", needLogin=True)
+
+    dmid = str(args.dmid or "").strip()
+    if not dmid.isdigit():
+        fail("dmid 必须是数字（发弹幕时返回的那个 dmid_str）")
+
+    bvid = args.bvid
+    s = cred.sessdata
+    jct = cred.bili_jct
+    if not s or not jct:
+        fail("凭证里缺 SESSDATA / bili_jct")
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                      "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "Referer": f"https://www.bilibili.com/video/{bvid}",
+        "Origin": "https://www.bilibili.com",
+        "Cookie": f"SESSDATA={s}; bili_jct={jct}; buvid3={cred.buvid3 or ''}; DedeUserID={cred.dedeuserid or ''}",
+    }
+
+    # 先拿 cid（撤回要 dmid + cid）
+    v = video_obj(bvid, cred)
+    try:
+        pages = await v.get_pages()
+        cid = (pages or [{}])[0].get("cid")
+    except Exception as e:
+        fail(f"拿不到 cid：{e}")
+    if not cid and args.cid:
+        cid = int(args.cid)
+    if not cid:
+        fail("拿不到这条视频的 cid")
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.post(
+                "https://api.bilibili.com/x/dm/recall",
+                params={"dmid": int(dmid), "cid": int(cid), "csrf": jct},
+                headers=headers,
+            )
+            j = r.json()
+    except Exception as e:
+        fail(f"撤回请求失败：{e}")
+
+    if j.get("code") == 0:
+        out({"ok": True, "dmid": dmid, "message": j.get("message") or "撤回成功"})
+    else:
+        out({"ok": False, "code": j.get("code"), "error": j.get("message")})
+
+
 async def do_actions(bvid, cred, args, info=None):
     """
     按参数对一条视频做动作。每一步单独捕获，一步失败不影响别的步。
@@ -392,16 +453,44 @@ async def do_actions(bvid, cred, args, info=None):
     done, failed = [], []
     gap = tuple(getattr(args, "interval", [1.5, 4.0]))
 
+    # ⚠️ 风控要认：B站 在「投币」这类写操作上会要二级验证（-401 verify_captcha_level2）。
+    #    这不是 bug、也不是没登录 —— 是平台在拦脚本。遇到就把这一轮停掉，
+    #    别一条条硬撞（撞多了账号会被盯上）。
+    riskTripped = {"hit": False}
+
     async def step(kind, coro_factory):
+        if riskTripped["hit"] and kind != "like":
+            return None
         try:
             r = await coro_factory()
-            if isinstance(r, dict) and r.get("code") == 0:
-                done.append({"kind": kind, "ok": True})
-                return r
+            # ⚠️ 不是所有接口都回 {"code":0}：比如发弹幕成功时直接回
+            #    {"dmid": ..., "dmid_str": ..., "visible": true}，**没有 code 字段**。
+            #    以前只认 code==0，把成功的弹幕判成了失败。
             if isinstance(r, dict):
-                failed.append({"kind": kind, "code": r.get("code"), "msg": r.get("message")})
-            else:
-                done.append({"kind": kind, "ok": True})
+                if r.get("code") == 0:
+                    done.append({"kind": kind, "ok": True})
+                    return r
+                if "code" not in r and ("dmid" in r or "dmid_str" in r):
+                    done.append({"kind": kind, "ok": True})
+                    return r
+                code = r.get("code")
+                msg = r.get("message") or ""
+                if code == -401 or "verify_captcha" in str(r):
+                    riskTripped["hit"] = True
+                    failed.append({
+                        "kind": kind, "code": code, "risk": True,
+                        "msg": f"{msg or '风控'}（B站 要人机验证了，这一轮不再继续写操作）",
+                    })
+                elif code == 36703:
+                    failed.append({"kind": kind, "code": code, "msg": "发太快了，B站 拦了（频率限制）"})
+                elif code == 65006:
+                    failed.append({"kind": kind, "code": code, "msg": "已经赞过了"})
+                elif code == 65004:
+                    failed.append({"kind": kind, "code": code, "msg": "没赞过，取消不了"})
+                else:
+                    failed.append({"kind": kind, "code": code, "msg": msg or f'code {code}'})
+                return r
+            done.append({"kind": kind, "ok": True})
             return r
         except Exception as e:
             failed.append({"kind": kind, "msg": str(e)})
@@ -428,13 +517,28 @@ async def do_actions(bvid, cred, args, info=None):
         from bilibili_api.utils.danmaku import Danmaku
 
         text = args.danmaku
-        r = await step("danmaku", lambda: v.send_danmaku(danmaku=Danmaku(text=text)))
-        if r and r.get("code") == 0:
-            d = r.get("data") or {}
+        # ⚠️ send_danmaku 必须给 page_index 或 cid，否则 B站 直接拒：
+        #    「page_index 和 cid 至少提供一个」。默认发在 P1。
+        async def _send_dm():
+            try:
+                pages = await v.get_pages()
+                first = (pages or [{}])[0]
+                cid = first.get("cid")
+                if cid:
+                    return await v.send_danmaku(cid=cid, danmaku=Danmaku(text=text))
+            except Exception:
+                pass
+            return await v.send_danmaku(page_index=0, danmaku=Danmaku(text=text))
+
+        r = await step("danmaku", _send_dm)
+        if r and (r.get("code") == 0 or "dmid_str" in r or "dmid" in r):
+            # ⚠️ 成功的返回是扁平的：{"dmid":…, "dmid_str":…, "visible":true}，
+            #    没有 data 包装 —— 以前从 r["data"] 取，永远拿不到 dmid。
+            dmid = r.get("dmid_str") or r.get("dmid") or ((r.get("data") or {}).get("dmid_str"))
             for x in done:
                 if x["kind"] == "danmaku":
                     x["text"] = text
-                    x["dmid"] = d.get("dmid_str") or d.get("dmid")
+                    x["dmid"] = str(dmid) if dmid else None
 
     if getattr(args, "follow", False):
         from bilibili_api import user as user_api
@@ -449,6 +553,7 @@ async def do_actions(bvid, cred, args, info=None):
     return {
         "ok": bool(done) and not failed,
         "partial": bool(done) and bool(failed),
+        "riskTripped": riskTripped["hit"],
         "bvid": bvid,
         "info": info,
         "done": done,
@@ -538,9 +643,135 @@ async def cmd_comment(args):
 
     if r.get("code") == 0:
         d = r.get("data") or {}
-        out({"ok": True, "rpid": d.get("rpid_str") or d.get("rpid"), "text": args.text})
+        rp = (d.get("rpid") or {})
+        rpid = d.get("rpid_str") or (rp.get("rpid_str") if isinstance(rp, dict) else rp) or d.get("rpid")
+        out({"ok": True, "rpid": str(rpid) if rpid else None, "text": args.text})
     else:
         out({"ok": False, "code": r.get("code"), "error": r.get("message")})
+
+
+async def cmd_comments(args):
+    """
+    读一条视频的评论区（默认按时间倒序，拿最新的）。
+    只读，不动任何东西。
+    """
+    cred = load_credential()
+    from bilibili_api import comment as comment_api
+
+    v = video_obj(args.bvid, cred)
+    try:
+        oid = v.get_aid()
+        if hasattr(oid, "__await__"):
+            oid = await oid
+    except Exception as e:
+        fail(f"拿不到 aid：{e}")
+
+    order = comment_api.OrderType.TIME if (args.order or "time") == "time" else comment_api.OrderType.LIKE
+    try:
+        r = await comment_api.get_comments(
+            oid=int(oid), type_=comment_api.CommentResourceType.VIDEO,
+            page_index=1, order=order, credential=cred,
+        )
+    except Exception as e:
+        fail(f"读评论区失败：{e}")
+
+    if isinstance(r, dict) and r.get("code") not in (0, None):
+        fail(r.get("message") or "读评论区失败", code=r.get("code"))
+
+    # ⚠️ get_comments 有时直接回数据本体（page/replies/…），有时包一层 {"code":0,"data":{…}}
+    #    —— 以前只认 data，结果永远读到空列表。
+    d = r
+    if isinstance(r, dict) and isinstance(r.get("data"), dict) and "replies" in r["data"]:
+        d = r["data"]
+    replies = (d or {}).get("replies") or []
+    me = str(getattr(cred, "dedeuserid", "") or "")
+    items = []
+    for c in replies:
+        member = c.get("member") or {}
+        content = c.get("content") or {}
+        uid = str(member.get("mid") or "")
+        if me and uid == me:
+            continue        # 自己发的不回
+        items.append({
+            "rpid": str(c.get("rpid_str") or c.get("rpid") or ""),
+            "uid": uid,
+            "uname": member.get("uname") or "",
+            "content": (content.get("message") or "").strip(),
+            "like": c.get("like") or 0,
+            "ctime": c.get("ctime") or 0,
+            "rcount": c.get("rcount") or 0,
+        })
+    out({"ok": True, "bvid": args.bvid, "total": len(items), "items": items[: args.limit]})
+
+
+async def cmd_uidname(args):
+    """UID → 昵称（发评论 @ 人要用昵称，不能用 UID）。"""
+    cred, _ = find_credential()
+    from bilibili_api import user
+
+    uid = str(args.uid or "").strip()
+    if not uid.isdigit():
+        fail("uid 必须是数字")
+    try:
+        u = user.User(uid=int(uid), credential=cred)
+        info = await u.get_user_info()
+    except Exception as e:
+        fail(f"查不到这个 UID：{e}")
+
+    name = (info or {}).get("name") or ((info or {}).get("data") or {}).get("name")
+    if not name:
+        fail("这个 UID 没有昵称（可能不存在或被封）")
+    out({"ok": True, "uid": uid, "name": name})
+
+
+async def cmd_dm(args):
+    """发私信（默认由宿主按开关决定要不要调）。"""
+    import httpx
+
+    cred, _ = find_credential()
+    if cred is None:
+        fail("还没登录 B站", needLogin=True)
+
+    to = str(args.uid or "").strip()
+    if not to.isdigit():
+        fail("私信对象 uid 必须是数字")
+    if not cred.sessdata or not cred.bili_jct:
+        fail("凭证里缺 SESSDATA / bili_jct")
+
+    sender = str(cred.dedeuserid or "").strip()
+    if not sender:
+        fail("凭证里缺自己的 DedeUserID")
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                      "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "Referer": "https://message.bilibili.com/",
+        "Origin": "https://message.bilibili.com",
+        "Cookie": f"SESSDATA={cred.sessdata}; bili_jct={cred.bili_jct}; "
+                  f"buvid3={cred.buvid3 or ''}; DedeUserID={sender}",
+    }
+    data = {
+        "msg[sender_uid]": sender,
+        "msg[receiver_id]": to,
+        "msg[receiver_type]": 1,
+        "msg[msg_type]": 1,
+        "msg[dev_id]": "0",
+        "msg[timestamp]": int(time.time()),
+        "msg[content]": json.dumps({"content": args.text}, ensure_ascii=False),
+        "csrf": cred.bili_jct,
+        "csrf_token": cred.bili_jct,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=20) as c:
+            r = await c.post("https://api.vc.bilibili.com/web_im/v1/web_im/send_msg", data=data, headers=headers)
+            j = r.json()
+    except Exception as e:
+        fail(f"私信发送失败：{e}")
+
+    if j.get("code") == 0:
+        out({"ok": True, "msgKey": (j.get("data") or {}).get("msg_key"), "to": to})
+    else:
+        out({"ok": False, "code": j.get("code"), "error": j.get("message")})
 
 
 # ─────────────────────────── 参数 & 入口 ───────────────────────────
@@ -585,6 +816,23 @@ def build_parser():
     c.add_argument("--root", type=int, default=0)
     c.add_argument("--parent", type=int, default=0)
 
+    rc = sub.add_parser("recall-danmaku")
+    rc.add_argument("--bvid", required=True)
+    rc.add_argument("--dmid", required=True)
+    rc.add_argument("--cid", type=int, default=0)
+
+    cm = sub.add_parser("comments")          # 读评论区（只读）
+    cm.add_argument("--bvid", required=True)
+    cm.add_argument("--order", default="time")
+    cm.add_argument("--limit", type=int, default=20)
+
+    un = sub.add_parser("uidname")           # UID → 昵称
+    un.add_argument("--uid", required=True)
+
+    dm = sub.add_parser("dm")                # 发私信
+    dm.add_argument("--uid", required=True)
+    dm.add_argument("--text", required=True)
+
     return p
 
 
@@ -598,6 +846,10 @@ CMDS = {
     "info": cmd_info,
     "run": cmd_run,
     "comment": cmd_comment,
+    "comments": cmd_comments,
+    "uidname": cmd_uidname,
+    "dm": cmd_dm,
+    "recall-danmaku": cmd_recall_danmaku,
 }
 
 

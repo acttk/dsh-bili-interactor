@@ -1,4 +1,4 @@
-/**
+﻿/**
  * dsh-bili-interactor —— 浏览器半端（设置里的「B站互动」页）
  * ============================================================================
  * 这一页把四件事摊开：
@@ -15,7 +15,7 @@ window.__ModuleLoader__.load({
   factory(require) {
     const React = require('react')
     const h = React.createElement
-    const API = '/api/bili-interactor'
+    const API = '/api/bili-itx'
 
     const pad = (n) => String(n).padStart(2, '0')
     const fmtDur = (ms) => {
@@ -31,8 +31,8 @@ window.__ModuleLoader__.load({
       if (isNaN(d.getTime())) return '—'
       return pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes())
     }
-    const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku: '弹幕', follow: '关注', comment: '评论' }
-    const KIND_COLOR = { like: '#f472b6', coin: '#fbbf24', favorite: '#38bdf8', danmaku: '#a78bfa', follow: '#34d399', comment: '#fb923c' }
+    const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku: '弹幕', follow: '关注', comment: '评论', reply: '回评论', dm: '私信' }
+    const KIND_COLOR = { like: '#f472b6', coin: '#fbbf24', favorite: '#38bdf8', danmaku: '#a78bfa', follow: '#34d399', comment: '#fb923c', reply: '#22d3ee', dm: '#f87171' }
     const TAGC = {
       '阶段': '#60a5fa', '思考': '#c084fc', '候选': '#94a3b8',
       '动作': '#4ade80', '跳过': '#64748b', '小结': '#22d3ee', '失败': '#f87171',
@@ -234,12 +234,24 @@ window.__ModuleLoader__.load({
               setLogin({ img: '', state: 'done', hint: '登录成功', name: j.name || '' })
               setMsg('登录成功：' + (j.name || j.uid || ''))
               load()
-            } else if (j && j.state === 'timeout') {
-              setLogin((s) => ({ ...s, state: 'timeout', hint: '二维码过期了，重新生成一张' }))
-            } else if (j && j.state === 'conf') {
-              setLogin((s) => ({ ...s, state: 'conf', hint: '扫到了，等你在手机上点确认' }))
+              return
             }
-          } catch { /* 轮询失败就下一轮再试 */ }
+            if (!j || !j.ok) {
+              setLogin((s) => ({ ...s, state: 'error', hint: (j && j.error) || '查状态失败' }))
+              return
+            }
+            // ⚠️ 每一种状态都要有反馈。以前只处理 timeout / conf，
+            //    state=none（服务端重启、key 丢了）就完全静默 —— 用户以为卡死了。
+            if (j.state === 'timeout') {
+              setLogin((s) => ({ ...s, state: 'timeout', hint: '二维码过期了，点「重新生成」' }))
+            } else if (j.state === 'conf') {
+              setLogin((s) => ({ ...s, state: 'conf', hint: '扫到了！在手机上点「确认登录」就会成功' }))
+            } else if (j.state === 'none') {
+              setLogin((s) => ({ ...s, state: 'lost', hint: '服务端丢了这张码的标识（可能刚重启过），点「重新生成」' }))
+            } else if (j.state === 'scan') {
+              setLogin((s) => (s.state === 'lost' ? { ...s, state: 'wait', hint: '等扫码…' } : s))
+            }
+          } catch { /* 网络抖动就下一轮再试 */ }
         }, 2000)
         return () => { alive = false; clearInterval(t) }
       }, [login.img, login.state])
@@ -305,13 +317,15 @@ window.__ModuleLoader__.load({
                 h('button', { 'data-bi-btn': '', 'data-variant': 'ghost', onClick: startLogin }, '重新生成'))))
           : null,
 
-        // 已登录
+        // 已登录（刚扫完码时给一条绿色确认，别让人以为没反应）
         loggedIn && !login.img
           ? h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' } },
             h('div', null,
               h('div', { 'data-bi-lab': '', style: { fontSize: 13.5 } },
-                login.name ? login.name : '已登录'),
-              h('div', { 'data-bi-note': '' }, '凭证在本机，随时可以退出')),
+                (login.name ? login.name : '已登录') +
+                (st.ownLogin ? '' : '（借用了「刷B站」插件的登录）')),
+              h('div', { 'data-bi-note': '', style: login.state === 'done' ? { color: '#34d399' } : null },
+                login.state === 'done' ? '✓ 登录成功' : '凭证在本机，随时可以退出')),
             h('button', {
               'data-bi-btn': '', 'data-variant': 'ghost', disabled: busy === 'logout', onClick: doLogout,
             }, busy === 'logout' ? '退出中…' : '退出登录'))
@@ -324,7 +338,7 @@ window.__ModuleLoader__.load({
           h('div', { 'data-bi-h2': '' }, '今天'),
           h('div', { 'data-bi-grid': '' },
             h(Stat, { n: String(t.actions || 0), label: '今天动了几次', color: '#4ade80' }),
-            h(Stat, { n: String(q.left || 0), label: '还剩额度' }),
+            h(Stat, { n: q.unlimited ? '不限' : String(q.left || 0), label: '还剩额度' }),
             h(Stat, { n: String(q.coins || 0), label: '今天投的币', color: '#fbbf24' }),
             h(Stat, { n: String((t.videos || []).length), label: '碰过几条视频' })),
           h('div', { 'data-bi-bar': '' },
@@ -339,7 +353,19 @@ window.__ModuleLoader__.load({
             running ? h('button', {
               'data-bi-btn': '', 'data-variant': 'ghost', disabled: busy === 'stop', onClick: onStop,
             }, '停下') : null),
-          h('div', { 'data-bi-msg': '' }, msg)),
+          h('div', { 'data-bi-msg': '' }, msg),
+          (run.lastResult && !running)
+            ? h('div', {
+                'data-bi-note': '',
+                style: {
+                  marginTop: 10, lineHeight: 1.7,
+                  color: run.lastResult.error ? '#f87171' : 'var(--bi-dim)',
+                },
+              }, '上一轮（' + localTime(run.lastResult.at) + '）：' +
+                 (run.lastResult.error
+                   ? '失败 —— ' + run.lastResult.error
+                   : (run.lastResult.message || '跑完了')))
+            : null),
 
         h('div', { 'data-bi-card': '' },
           h('div', { 'data-bi-h2': '' }, '动作分布（今天）'),
@@ -426,7 +452,9 @@ window.__ModuleLoader__.load({
           [
             ['doLike', '点赞', '每条顶一下'],
             ['doCoin', '投币', '花你自己的硬币，一天别太多'],
-            ['doFavorite', '收藏', '需要有收藏夹 ID（下面填）'],
+            ['doFavorite', '收藏', '需要先在上面填收藏夹 ID，否则不会收'],
+            ['doComment', '在评论区留言', '★ 重点功能：发一条顶层评论'],
+            ['doReplyComment', '回别人的评论', '在评论区挑几条回'],
             ['doDanmaku', '发弹幕', '发出去就收不回，想清楚再开'],
             ['doFollow', '关注 UP', '最容易被人发现的那一个，默认关'],
           ].map(([k, lab, note]) => h('div', { 'data-bi-row': '', key: k },
@@ -436,6 +464,14 @@ window.__ModuleLoader__.load({
             h(Switch, { on: !!cfg[k], onChange: (v) => patch({ [k]: v }, lab) }))),
           h('div', { 'data-bi-row': '' },
             h('div', null,
+              h('div', { 'data-bi-lab': '' }, '收藏夹 ID'),
+              h('div', { 'data-bi-note': '' }, '开了收藏才用到；0 = 不收（去 B站 收藏夹地址里那串数字）')),
+            h('input', {
+              'data-bi-input': '', type: 'text', inputMode: 'numeric', defaultValue: String(cfg.favoriteId || 0),
+              onBlur: (e) => patch({ favoriteId: Number(String(e.target.value).replace(/[^\d]/g, '')) || 0 }, '收藏夹'),
+            })),
+          h('div', { 'data-bi-row': '' },
+            h('div', null,
               h('div', { 'data-bi-lab': '' }, '每条投几个币'),
               h('div', { 'data-bi-note': '' }, '1 或 2')),
             h('input', {
@@ -443,24 +479,113 @@ window.__ModuleLoader__.load({
               onBlur: (e) => patch({ coinPerVideo: Math.max(1, Math.min(2, Number(e.target.value) || 1)) }, '投币数'),
             }))),
 
+        /* ── ★ 评论区：@ 谁、回几条 ── */
         h('div', { 'data-bi-card': '' },
-          h('div', { 'data-bi-h2': '' }, '额度和节奏'),
+          h('div', { 'data-bi-h2': '' }, '评论区'),
+          h('div', { 'data-bi-row': '' },
+            h('div', { style: { flex: '1 1 auto' } },
+              h('div', { 'data-bi-lab': '' }, '@ 谁的 UID'),
+              h('div', { 'data-bi-note': '' },
+                '填 UID（不是昵称）。评论会写成「@昵称 正文」。' +
+                (cfg.mentionName ? ' 现在认到的是「' + cfg.mentionName + '」' : '') +
+                ' 填 0 = 不 @ 任何人。')),
+            h('input', {
+              'data-bi-input': '', style: { width: 140 }, type: 'text', inputMode: 'numeric',
+              defaultValue: String(cfg.mentionUid || 0),
+              onBlur: (e) => {
+                const n = Number(String(e.target.value).replace(/[^\d]/g, '')) || 0
+                patch({ mentionUid: n, mentionName: '' }, 'UID')
+              },
+            })),
+          h('div', { 'data-bi-row': '' },
+            h('div', null,
+              h('div', { 'data-bi-lab': '' }, '每条视频最多回几条'),
+              h('div', { 'data-bi-note': '' }, '0 = 只发顶层评论，不回别人')),
+            h('input', {
+              'data-bi-input': '', type: 'number', min: 0, max: 20, defaultValue: cfg.replyCount,
+              onBlur: (e) => patch({ replyCount: Math.max(0, Math.min(20, Number(e.target.value) || 0)) }, '回复条数'),
+            }))),
+
+        /* ── ★ 人设：整张角色卡都能贴进来，不截断 ── */
+        h('div', { 'data-bi-card': '' },
+          h('div', { 'data-bi-h2': '' }, '它说话的样子（人设）'),
+          h('div', { 'data-bi-note': '', style: { marginBottom: 10, lineHeight: 1.7 } },
+            '把角色卡整段贴进来就行 —— 这里**不截断**，写多长都行。评论和弹幕都照这个说话。'),
+          h('textarea', {
+            'data-bi-input': '', style: {
+              width: '100%', minHeight: 180, resize: 'vertical', fontFamily: 'inherit',
+              lineHeight: 1.7, padding: '10px 12px',
+            },
+            defaultValue: cfg.persona || '',
+            onBlur: (e) => patch({ persona: String(e.target.value) }, '人设'),
+          }),
+          h('div', { 'data-bi-note': '', style: { marginTop: 8, marginBottom: 6 } },
+            '评论区专用语气（可选，留空就用上面那份）'),
+          h('textarea', {
+            'data-bi-input': '', style: {
+              width: '100%', minHeight: 90, resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.7,
+            },
+            defaultValue: cfg.commentPersona || '',
+            onBlur: (e) => patch({ commentPersona: String(e.target.value) }, '评论语气'),
+          })),
+
+        h('div', { 'data-bi-card': '' },
+          h('div', { 'data-bi-h2': '' }, '额度和节奏（都是上限，想调多大都行）'),
           h('div', { 'data-bi-row': '' },
             h('div', null,
               h('div', { 'data-bi-lab': '' }, '一轮最多动几条'),
-              h('div', { 'data-bi-note': '' }, '上限，不是任务量')),
+              h('div', { 'data-bi-note': '' }, '上限，不是任务量；挑不满就少动几条')),
             h('input', {
-              'data-bi-input': '', type: 'number', min: 1, max: 100, defaultValue: cfg.maxActionsPerRun,
-              onBlur: (e) => patch({ maxActionsPerRun: Math.max(1, Math.min(100, Number(e.target.value) || 20)) }, '每轮上限'),
+              'data-bi-input': '', type: 'number', min: 1, max: 500, defaultValue: cfg.maxActionsPerRun,
+              onBlur: (e) => patch({ maxActionsPerRun: Math.max(1, Math.min(500, Number(e.target.value) || 20)) }, '每轮上限'),
             })),
           h('div', { 'data-bi-row': '' },
             h('div', null,
               h('div', { 'data-bi-lab': '' }, '一天最多动几次'),
-              h('div', { 'data-bi-note': '' }, '到点自动停')),
+              h('div', { 'data-bi-note': '' }, '到点自动停。填 0 = 不限（只用「一轮上限」兜着）')),
             h('input', {
-              'data-bi-input': '', type: 'number', min: 1, max: 500, defaultValue: cfg.maxActionsPerDay,
-              onBlur: (e) => patch({ maxActionsPerDay: Math.max(1, Math.min(500, Number(e.target.value) || 120)) }, '每日上限'),
+              'data-bi-input': '', type: 'number', min: 0, max: 100000, defaultValue: cfg.maxActionsPerDay,
+              onBlur: (e) => patch({ maxActionsPerDay: Math.max(0, Number(e.target.value) || 0) }, '每日上限'),
+            })),
+          h('div', { 'data-bi-row': '' },
+            h('div', null,
+              h('div', { 'data-bi-lab': '' }, '两次动作之间等多久（秒）'),
+              h('div', { 'data-bi-note': '' }, '填两个数 = 随机区间，比如 1.5 和 4')),
+            h('input', {
+              'data-bi-input': '', style: { width: 150 }, type: 'text',
+              defaultValue: ((cfg.actionIntervalMs || [1500, 4000]).map((x) => x / 1000)).join(','),
+              onBlur: (e) => {
+                const parts = String(e.target.value).split(/[,\s，]+/).map(Number).filter((n) => n > 0)
+                if (parts.length === 2) {
+                  patch({ actionIntervalMs: [Math.round(parts[0] * 1000), Math.round(parts[1] * 1000)] }, '间隔')
+                }
+              },
             }))),
+
+        /* ── ★ 私信（默认关） ── */
+        h('div', { 'data-bi-card': '', style: cfg.doDm ? { borderColor: 'rgba(251,191,36,.45)' } : null },
+          h('div', { 'data-bi-h2': '' }, '私信通知'),
+          h('div', { 'data-bi-note': '', style: { marginBottom: 10, lineHeight: 1.7 } },
+            '默认关闭。开了之后，评论成功会给你发一条私信提醒 —— 但**私信发出去撤不回**，B站 没有可用的撤回接口。'),
+          h('div', { 'data-bi-row': '' },
+            h('div', null,
+              h('div', { 'data-bi-lab': '' }, '发私信通知我'),
+              h('div', { 'data-bi-note': '' }, '关着就完全不碰私信')),
+            h(Switch, { on: !!cfg.doDm, onChange: (v) => patch({ doDm: v }, '私信') })),
+          cfg.doDm ? h('div', { 'data-bi-row': '' },
+            h('div', null,
+              h('div', { 'data-bi-lab': '' }, '私信发给谁（UID）'),
+              h('div', { 'data-bi-note': '' }, '填你自己的 UID')),
+            h('input', {
+              'data-bi-input': '', style: { width: 140 }, type: 'text', inputMode: 'numeric',
+              defaultValue: String(cfg.dmUid || 0),
+              onBlur: (e) => patch({ dmUid: Number(String(e.target.value).replace(/[^\d]/g, '')) || 0 }, '私信对象'),
+            })) : null,
+          cfg.doDm ? h('div', { 'data-bi-row': '' },
+            h('div', null,
+              h('div', { 'data-bi-lab': '' }, '只在评论成功后发'),
+              h('div', { 'data-bi-note': '' }, '关掉的话，每轮都会发一条')),
+            h(Switch, { on: !!cfg.dmOnComment, onChange: (v) => patch({ dmOnComment: v }, '私信时机') })) : null),
 
         h('div', { 'data-bi-card': '' },
           h('div', { 'data-bi-h2': '' }, '找什么视频'),
@@ -479,16 +604,42 @@ window.__ModuleLoader__.load({
             h('input', {
               'data-bi-input': '', type: 'number', min: 0, defaultValue: cfg.minPlay,
               onBlur: (e) => patch({ minPlay: Math.max(0, Number(e.target.value) || 0) }, '播放下限'),
+            })),
+          h('div', { 'data-bi-row': '' },
+            h('div', null,
+              h('div', { 'data-bi-lab': '' }, '只要最近几天发的'),
+              h('div', { 'data-bi-note': '' }, '0 = 不限；太老的不碰')),
+            h('input', {
+              'data-bi-input': '', type: 'number', min: 0, max: 365, defaultValue: cfg.daysBack,
+              onBlur: (e) => patch({ daysBack: Math.max(0, Math.min(365, Number(e.target.value) || 0)) }, '时间范围'),
+            })),
+          h('div', { 'data-bi-row': '' },
+            h('div', null,
+              h('div', { 'data-bi-lab': '' }, '同一个 UP 最多碰几条'),
+              h('div', { 'data-bi-note': '' }, '避免一头扎进同一个人的视频')),
+            h('input', {
+              'data-bi-input': '', type: 'number', min: 1, max: 20, defaultValue: cfg.maxPerUpPerRun,
+              onBlur: (e) => patch({ maxPerUpPerRun: Math.max(1, Math.min(20, Number(e.target.value) || 1)) }, '同 UP 上限'),
+            })),
+          h('div', { style: { marginTop: 10 } },
+            h('div', { 'data-bi-lab': '' }, '标题里带这些词就不碰'),
+            h('div', { 'data-bi-note': '', style: { margin: '4px 0 6px' } }, '逗号分隔，比如：抽奖,广告,加群'),
+            h('input', {
+              'data-bi-input': '', style: { width: '100%' }, defaultValue: (cfg.skipKeywords || []).join('，'),
+              onBlur: (e) => {
+                const list = String(e.target.value).split(/[,，\s]+/).map((x) => x.trim()).filter(Boolean)
+                patch({ skipKeywords: list }, '屏蔽词')
+              },
             }))),
 
         h('div', { 'data-bi-card': '' },
           h('div', { 'data-bi-h2': '' }, '弹幕怎么写'),
           h('div', { 'data-bi-note': '', style: { marginBottom: 8 } },
-            '有 DeepSeek key 就让模型写，没有就用模板。写出来会先显示在「过程」里给你看。'),
+            '有 DeepSeek key 就让模型写，没有就用模板。弹幕短，和评论是两套。'),
           h('textarea', {
-            'data-bi-input': '', style: { width: '100%', height: 68, resize: 'vertical', fontFamily: 'inherit' },
+            'data-bi-input': '', style: { width: '100%', height: 90, resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.7 },
             defaultValue: cfg.danmakuStyle || '',
-            onBlur: (e) => patch({ danmakuStyle: String(e.target.value).slice(0, 300) }, '弹幕风格'),
+            onBlur: (e) => patch({ danmakuStyle: String(e.target.value) }, '弹幕风格'),
           })),
       )
 

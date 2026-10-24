@@ -1,5 +1,5 @@
 // 宿主半边冒烟：用一个假 ctx 把 apply() 跑起来，确认
-//   1) 路由被注册（/api/bili-interactor）
+//   1) 路由被注册（/api/bili-itx）
 //   2) state 接口能出数
 //   3) /run 在没有登录/没有额度时给出可读的拒绝理由，而不是崩
 // 注意：这里不打真 B站 接口 —— 只测接线。
@@ -37,7 +37,7 @@ mod.apply(ctx, {})
 
 if (routes.length !== 1) throw new Error('路由没注册，数量=' + routes.length)
 const r = routes[0]
-if (r.path !== '/api/bili-interactor') throw new Error('路由路径不对：' + r.path)
+if (r.path !== '/api/bili-itx') throw new Error('路由路径不对：' + r.path)
 if (typeof r.handler !== 'function') throw new Error('handler 不是函数')
 
 console.log('OK  name=' + mod.name + '  inject=' + mod.inject.join(','))
@@ -65,31 +65,31 @@ function call(method, path, body) {
   })
 }
 
-const st = await call('GET', '/api/bili-interactor/state')
+const st = await call('GET', '/api/bili-itx/state')
 if (st.code !== 200) throw new Error('state HTTP ' + st.code)
 if (!st.json.ok) throw new Error('state 返回 ok=false')
 console.log('OK  state: quota=' + JSON.stringify(st.json.quota) + '  version=' + st.json.version)
 
-const cfg = await call('GET', '/api/bili-interactor/config')
+const cfg = await call('GET', '/api/bili-itx/config')
 if (!cfg.json.ok || !cfg.json.config) throw new Error('config 接口不对')
 console.log('OK  config: enabled=' + cfg.json.config.enabled + ' keywords=' + JSON.stringify(cfg.json.config.keywords))
 
-const patched = await call('POST', '/api/bili-interactor/config', { maxActionsPerRun: 7 })
+const patched = await call('POST', '/api/bili-itx/config', { maxActionsPerRun: 7 })
 if (!patched.json.ok || patched.json.config.maxActionsPerRun !== 7) throw new Error('配置写不进去')
 console.log('OK  patch config: maxActionsPerRun=' + patched.json.config.maxActionsPerRun)
 
 /* ── 未登录时 /run 必须拦住并告诉前端去登录 ── */
-const runNoLogin = await call('POST', '/api/bili-interactor/run')
+const runNoLogin = await call('POST', '/api/bili-itx/run')
 if (runNoLogin.json.started !== false) throw new Error('没登录却跑起来了')
 if (!runNoLogin.json.needLogin) throw new Error('没登录时该给 needLogin 标记')
 console.log('OK  run(未登录) 正确拦截: ' + runNoLogin.json.error)
 
-const st2 = await call('GET', '/api/bili-interactor/state')
+const st2 = await call('GET', '/api/bili-itx/state')
 if (typeof st2.json.loggedIn !== 'boolean') throw new Error('state 里没有 loggedIn')
 if (st2.json.loggedIn !== false) throw new Error('临时 home 没凭证，loggedIn 该是 false')
 console.log('OK  state.loggedIn=false（未登录态正确）')
 
-const me0 = await call('GET', '/api/bili-interactor/me')
+const me0 = await call('GET', '/api/bili-itx/me')
 if (me0.json.needLogin !== true) throw new Error('未登录时 /me 该给 needLogin')
 console.log('OK  GET /me 未登录: ' + me0.json.error)
 
@@ -98,25 +98,32 @@ const { mkdirSync, writeFileSync } = await import('node:fs')
 const credFile = process.env.BILI_INTERACTOR_HOME + '\\credential.json'
 mkdirSync(process.env.BILI_INTERACTOR_HOME, { recursive: true })
 writeFileSync(credFile, JSON.stringify({ sessdata: 'x', bili_jct: 'y', buvid3: 'z', dedeuserid: '1' }), 'utf8')
-const st3 = await call('GET', '/api/bili-interactor/state')
+const st3 = await call('GET', '/api/bili-itx/state')
 if (st3.json.loggedIn !== true) throw new Error('放了凭证却还说没登录')
 console.log('OK  state.loggedIn=true（有凭证就认）')
 
-// 额度为 0 时 /run 应该给出可读理由
-await call('POST', '/api/bili-interactor/config', { maxActionsPerDay: 0 })
-const run0 = await call('POST', '/api/bili-interactor/run')
-if (run0.json.started !== false) throw new Error('额度为 0 却返回 started=true（骗人）')
-if (!run0.json.error || !run0.json.error.includes('上限')) throw new Error('拒绝理由不清楚：' + run0.json.error)
-console.log('OK  run(quota=0) 正确拒绝: ' + run0.json.error)
+// 每日上限 = 0 现在语义是「不限」，所以它不该再被当成 0 次拦下来。
+// 真要用「额度耗尽」来测拦截，就把「一轮上限」设成 0 —— 那是真的一次都不许。
+await call('POST', '/api/bili-itx/config', { maxActionsPerDay: 0, maxActionsPerRun: 0 })
+const run0 = await call('POST', '/api/bili-itx/run')
+if (run0.json.started !== false) throw new Error('一轮上限为 0 却返回 started=true（骗人）')
+console.log('OK  run(maxActionsPerRun=0) 正确拒绝: ' + (run0.json.error || '(无理由)'))
+
+// 每日上限 = 0 应该是「不限」，不该拦住
+await call('POST', '/api/bili-itx/config', { maxActionsPerDay: 0, maxActionsPerRun: 5 })
+const stUnlimited = await call('GET', '/api/bili-itx/state')
+const left0 = stUnlimited.json.quota.left
+if (left0 === 0) throw new Error('每日上限 0 被当成「禁止」了（应该是不限）')
+console.log('OK  每日上限 0 = 不限（remaining=' + left0 + '）')
 
 // 关掉总开关，也该被拒
-await call('POST', '/api/bili-interactor/config', { enabled: false, maxActionsPerDay: 120 })
-const run1 = await call('POST', '/api/bili-interactor/run')
+await call('POST', '/api/bili-itx/config', { enabled: false, maxActionsPerDay: 120, maxActionsPerRun: 20 })
+const run1 = await call('POST', '/api/bili-itx/run')
 if (run1.json.started !== false) throw new Error('关着却跑起来了')
 console.log('OK  run(disabled) 正确拒绝: ' + run1.json.error)
-await call('POST', '/api/bili-interactor/config', { enabled: true })
+await call('POST', '/api/bili-itx/config', { enabled: true })
 
-const live = await call('GET', '/api/bili-interactor/live')
+const live = await call('GET', '/api/bili-itx/live')
 if (!live.json.ok) throw new Error('live 接口不对')
 console.log('OK  live: exists=' + live.json.exists + ' lines=' + live.json.lines.length)
 
