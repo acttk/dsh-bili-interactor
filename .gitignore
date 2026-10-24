@@ -1,0 +1,12 @@
+node_modules/
+*.log
+.DS_Store
+.env
+*.local
+
+# 插件运行时产物（不该进仓库）
+ledger.jsonl
+daily.json
+live.md
+interact.log
+bili_credential.json

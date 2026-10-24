@@ -1,0 +1,9 @@
+# dsh-bili-interactor —— DSH bundle patch
+#
+# 每个 bundle 的 patch 按 profile 的 dsh.profile.bundles 顺序叠，
+# 这一层负责把本插件插进配置树。
+- insert:
+    - id: bili-interactor
+      name: dsh-bili-interactor
+      config:
+        enabled: true
