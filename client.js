@@ -131,7 +131,7 @@ window.__ModuleLoader__.load({
       const [tab, setTab] = React.useState('overview')
       const [busy, setBusy] = React.useState('')
       const [msg, setMsg] = React.useState('')
-      const [login, setLogin] = React.useState({ img: '', state: '', hint: '', name: '' })
+      const [login, setLogin] = React.useState({ img: '', state: '', hint: '', name: '', gen: 0 })
       const [, tick] = React.useState(0)
 
       const load = React.useCallback(async () => {
@@ -217,11 +217,11 @@ window.__ModuleLoader__.load({
       /* ── 登录 ── */
       const startLogin = async () => {
         setBusy('login')
-        setLogin({ img: '', state: 'loading', hint: '正在生成二维码…', name: '' })
+        setLogin({ img: '', state: 'loading', gen: 0, hint: '正在生成二维码…', name: '' })
         try {
           const j = await post('/login/qr')
           if (j && j.ok && j.image) {
-            setLogin({ img: j.image, state: 'wait', hint: '用 B站 App 扫这张码，然后在手机上点「确认登录」', name: '' })
+            setLogin({ img: j.image, state: 'wait', gen: 0, hint: '用 B站 App 扫这张码，然后在手机上点「确认登录」', name: '' })
           } else {
             setLogin({ img: '', state: 'error', hint: (j && j.error) || '生成失败', name: '' })
           }
@@ -243,15 +243,34 @@ window.__ModuleLoader__.load({
       }
 
       // 二维码显示着的时候，每 2 秒问一次「扫了没」
+      // 二维码过期时后端会自动换一张，这里跟着换图（不用用户点按钮）
+      React.useEffect(() => {
+        if (!st || !st.loginGen) return
+        if (login.gen === st.loginGen) return
+        ;(async () => {
+          try {
+            const r = await fetch(API + '/login/pending', { credentials: 'same-origin' })
+            const j = await r.json()
+            if (j && j.pending && j.image) {
+              setLogin({
+                img: j.image, state: j.state || 'scan', gen: st.loginGen,
+                hint: `二维码已自动刷新（还有 ${j.leftSec} 秒），扫完在手机上点「确认登录」`,
+                name: '',
+              })
+            }
+          } catch { /* ignore */ }
+        })()
+      }, [st && st.loginGen])
+
       // 后端自己会轮询登录（不依赖这个页面开着），这里只负责把结果反映出来
       React.useEffect(() => {
         if (!st) return
         if (st.loggedIn && login.state !== 'done') {
-          setLogin({ img: '', state: 'done', hint: '登录成功', name: st.loginName || '' })
+          setLogin({ img: '', state: 'done', gen: 0, hint: '登录成功', name: st.loginName || '' })
           setMsg('登录成功' + (st.loginName ? '：' + st.loginName : ''))
         }
         if (!st.loggedIn && st.loginState === 'done' && !login.state) {
-          setLogin({ img: '', state: 'done', hint: '登录成功', name: st.loginName || '' })
+          setLogin({ img: '', state: 'done', gen: 0, hint: '登录成功', name: st.loginName || '' })
         }
       }, [st && st.loggedIn, st && st.loginState])
 
@@ -343,7 +362,7 @@ window.__ModuleLoader__.load({
             h('div', { style: { flex: '1 1 220px', minWidth: 200 } },
               h('div', { 'data-bi-note': '', style: { fontSize: 12.5, lineHeight: 1.8 } }, login.hint),
               h('div', { 'data-bi-note': '', style: { marginTop: 10 } },
-                login.state === 'wait' ? '每 2 秒自动检查一次…' :
+                login.state === 'wait' ? '扫完在手机上点「确认登录」。码 3 分钟过期，会自动换新的，不用你管。' :
                 login.state === 'conf' ? '手机点了确认就成功了' :
                 login.state === 'timeout' ? '过期了就点下面重新生成' : ''),
               h('div', { style: { marginTop: 12, display: 'flex', gap: 8 } },
