@@ -215,13 +215,21 @@ window.__ModuleLoader__.load({
       }
 
       /* ── 登录 ── */
+      // 生成/复用二维码。后端幂等：还在有效期就返回同一张，不会作废手上那张。
       const startLogin = async () => {
         setBusy('login')
-        setLogin({ img: '', state: 'loading', gen: 0, hint: '正在生成二维码…', name: '' })
         try {
           const j = await post('/login/qr')
           if (j && j.ok && j.image) {
-            setLogin({ img: j.image, state: 'wait', gen: 0, hint: '用 B站 App 扫这张码，然后在手机上点「确认登录」', name: '' })
+            setLogin({
+              img: j.image,
+              state: 'scan',
+              gen: j.gen || 0,
+              name: '',
+              hint: j.reused
+                ? '这张码还有 ' + j.leftSec + ' 秒，直接扫就行'
+                : '扫完在手机上点「确认登录」',
+            })
           } else {
             setLogin({ img: '', state: 'error', hint: (j && j.error) || '生成失败', name: '' })
           }
@@ -242,71 +250,45 @@ window.__ModuleLoader__.load({
         } finally { setBusy('') }
       }
 
-      // 二维码显示着的时候，每 2 秒问一次「扫了没」
-      // 二维码过期时后端会自动换一张，这里跟着换图（不用用户点按钮）
+      /* ───────── 登录：只信 /login/view 这一份数据 ─────────
+       * 以前前端自己存着 img，后端换码了它不知道 ——
+       * 界面显示一张码，后端却在等另一张，扫了必然失败。
+       * 现在图 / 状态 / 剩余秒数全由后端给，前端只负责画。
+       */
       React.useEffect(() => {
-        if (!st || !st.loginGen) return
-        if (login.gen === st.loginGen) return
-        ;(async () => {
-          try {
-            const r = await fetch(API + '/login/pending', { credentials: 'same-origin' })
-            const j = await r.json()
-            if (j && j.pending && j.image) {
-              setLogin({
-                img: j.image, state: j.state || 'scan', gen: st.loginGen,
-                hint: `二维码已自动刷新（还有 ${j.leftSec} 秒），扫完在手机上点「确认登录」`,
-                name: '',
-              })
-            }
-          } catch { /* ignore */ }
-        })()
-      }, [st && st.loginGen])
-
-      // 后端自己会轮询登录（不依赖这个页面开着），这里只负责把结果反映出来
-      React.useEffect(() => {
-        if (!st) return
-        if (st.loggedIn && login.state !== 'done') {
-          setLogin({ img: '', state: 'done', gen: 0, hint: '登录成功', name: st.loginName || '' })
-          setMsg('登录成功' + (st.loginName ? '：' + st.loginName : ''))
-        }
-        if (!st.loggedIn && st.loginState === 'done' && !login.state) {
-          setLogin({ img: '', state: 'done', gen: 0, hint: '登录成功', name: st.loginName || '' })
-        }
-      }, [st && st.loggedIn, st && st.loginState])
-
-      React.useEffect(() => {
-        if (!login.img || login.state === 'done') return undefined
         let alive = true
-        const t = setInterval(async () => {
+        const tick = async () => {
           try {
-            const r = await fetch(API + '/login/poll', { credentials: 'same-origin' })
+            const r = await fetch(API + '/login/view', { credentials: 'same-origin' })
             const j = await r.json()
-            if (!alive) return
-            if (j && j.done) {
-              setLogin({ img: '', state: 'done', hint: '登录成功', name: j.name || '' })
-              setMsg('登录成功：' + (j.name || j.uid || ''))
-              load()
+            if (!alive || !j || !j.ok) return
+            if (j.loggedIn) {
+              setLogin((s) => (s.state === 'done' ? s : { img: '', state: 'done', gen: j.gen || 0, hint: '登录成功', name: j.name || '' }))
+              setMsg('登录成功' + (j.name ? '：' + j.name : ''))
               return
             }
-            if (!j || !j.ok) {
-              setLogin((s) => ({ ...s, state: 'error', hint: (j && j.error) || '查状态失败' }))
-              return
+            if (j.pending && j.image) {
+              setLogin((s) => {
+                if (s.state === 'done') return s
+                return {
+                  img: j.image,
+                  state: j.state || 'scan',
+                  gen: j.gen || 0,
+                  name: j.name || '',
+                  hint: j.state === 'conf'
+                    ? '扫到了！在手机上点「确认登录」'
+                    : '扫完在手机上点「确认登录」。还剩约 ' + j.leftSec + ' 秒，过期会自动换新。',
+                }
+              })
+            } else {
+              setLogin((s) => (s.state === 'done' ? s : { img: '', state: '', gen: j.gen || 0, hint: s.hint || '', name: '' }))
             }
-            // ⚠️ 每一种状态都要有反馈。以前只处理 timeout / conf，
-            //    state=none（服务端重启、key 丢了）就完全静默 —— 用户以为卡死了。
-            if (j.state === 'timeout') {
-              setLogin((s) => ({ ...s, state: 'timeout', hint: '二维码过期了，点「重新生成」' }))
-            } else if (j.state === 'conf') {
-              setLogin((s) => ({ ...s, state: 'conf', hint: '扫到了！在手机上点「确认登录」就会成功' }))
-            } else if (j.state === 'none') {
-              setLogin((s) => ({ ...s, state: 'lost', hint: '服务端丢了这张码的标识（可能刚重启过），点「重新生成」' }))
-            } else if (j.state === 'scan') {
-              setLogin((s) => (s.state === 'lost' ? { ...s, state: 'wait', hint: '等扫码…' } : s))
-            }
-          } catch { /* 网络抖动就下一轮再试 */ }
-        }, 2000)
+          } catch { /* 网络抖动，下一轮再试 */ }
+        }
+        tick()
+        const t = setInterval(tick, 2000)
         return () => { alive = false; clearInterval(t) }
-      }, [login.img, login.state])
+      }, [])
 
       const patch = async (kv, note) => {
         // 本地先改，界面立刻反应；再落盘
@@ -339,48 +321,54 @@ window.__ModuleLoader__.load({
 
       const loggedIn = !!st.loggedIn
 
-      /* ── 登录卡：没登录时必须先看到它，不然点「跑一轮」只会收到一句报错 ── */
+      /* ── 登录卡 ──
+       * 渲染顺序写死得很简单，不给状态打架留空间：
+       *   已登录  -> 只显示账号，绝不再显示二维码
+       *   有二维码 -> 只显示二维码
+       *   都没有   -> 显示「扫码登录」按钮
+       * 以前「已登录」那个分支还要求 !login.img，
+       * 结果登录成功后只要 img 没清掉就永远看不到「已登录」，一直在让用户扫码。
+       */
       const loginCard = h('div', { 'data-bi-card': '', style: loggedIn ? null : { borderColor: 'rgba(251,191,36,.45)' } },
         h('div', { 'data-bi-h2': '' }, loggedIn ? '账号' : '先登录 B站'),
+
+        loggedIn
+          ? h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' } },
+              h('div', null,
+                h('div', { 'data-bi-lab': '', style: { fontSize: 13.5 } },
+                  (st.loginName || login.name || '已登录') +
+                  (st.ownLogin ? '' : '（借用「刷B站」的登录）')),
+                h('div', { 'data-bi-note': '', style: { color: '#34d399' } },
+                  login.state === 'done' ? '✓ 刚登录成功，现在可以开跑了' : '凭证在本机，随时可以退出')),
+              h('button', {
+                'data-bi-btn': '', 'data-variant': 'ghost', disabled: busy === 'logout', onClick: doLogout,
+              }, busy === 'logout' ? '退出中…' : '退出登录'))
+          : null,
+
+        !loggedIn && login.img
+          ? h('div', { style: { display: 'flex', gap: 18, alignItems: 'flex-start', flexWrap: 'wrap' } },
+              h('img', {
+                src: login.img, alt: '登录二维码', width: 176, height: 176,
+                style: { borderRadius: 10, background: '#fff', padding: 8, flex: '0 0 auto' },
+              }),
+              h('div', { style: { flex: '1 1 220px', minWidth: 200 } },
+                h('div', { 'data-bi-note': '', style: { fontSize: 12.5, lineHeight: 1.8 } }, login.hint),
+                h('div', { 'data-bi-note': '', style: { marginTop: 10 } },
+                  login.state === 'conf'
+                    ? '扫到了！现在去手机上点「确认登录」'
+                    : '打开 B站 手机 App → 右上角扫一扫 → 点「确认登录」'),
+                h('div', { style: { marginTop: 12 } },
+                  h('button', { 'data-bi-btn': '', 'data-variant': 'ghost', onClick: startLogin }, '换一张'))))
+          : null,
+
         !loggedIn && !login.img
           ? h('div', null,
-            h('div', { 'data-bi-note': '', style: { marginBottom: 12, fontSize: 12.5, lineHeight: 1.7 } },
-              '点赞、投币、弹幕都记在账号上，所以得先知道你用的是谁。点下面的按钮出二维码，用 B站 手机 App 扫一下、手机上点「确认登录」就行。凭证只存在这台电脑的 ~/.dsh/bili-interactor/ 里，不上传任何地方。'),
-            h('button', {
-              'data-bi-btn': '', 'data-variant': 'primary', disabled: busy === 'login', onClick: startLogin,
-            }, busy === 'login' ? '正在生成…' : '扫码登录'),
-            h('div', { 'data-bi-msg': '' }, login.hint))
-          : null,
-
-        // 二维码
-        login.img
-          ? h('div', { style: { display: 'flex', gap: 18, alignItems: 'flex-start', flexWrap: 'wrap' } },
-            h('img', {
-              src: login.img, alt: '登录二维码', width: 176, height: 176,
-              style: { borderRadius: 10, background: '#fff', padding: 8, flex: '0 0 auto' },
-            }),
-            h('div', { style: { flex: '1 1 220px', minWidth: 200 } },
-              h('div', { 'data-bi-note': '', style: { fontSize: 12.5, lineHeight: 1.8 } }, login.hint),
-              h('div', { 'data-bi-note': '', style: { marginTop: 10 } },
-                login.state === 'wait' ? '扫完在手机上点「确认登录」。码 3 分钟过期，会自动换新的，不用你管。' :
-                login.state === 'conf' ? '手机点了确认就成功了' :
-                login.state === 'timeout' ? '过期了就点下面重新生成' : ''),
-              h('div', { style: { marginTop: 12, display: 'flex', gap: 8 } },
-                h('button', { 'data-bi-btn': '', 'data-variant': 'ghost', onClick: startLogin }, '重新生成'))))
-          : null,
-
-        // 已登录（刚扫完码时给一条绿色确认，别让人以为没反应）
-        loggedIn && !login.img
-          ? h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' } },
-            h('div', null,
-              h('div', { 'data-bi-lab': '', style: { fontSize: 13.5 } },
-                (login.name ? login.name : '已登录') +
-                (st.ownLogin ? '' : '（借用了「刷B站」插件的登录）')),
-              h('div', { 'data-bi-note': '', style: login.state === 'done' ? { color: '#34d399' } : null },
-                login.state === 'done' ? '✓ 登录成功' : '凭证在本机，随时可以退出')),
-            h('button', {
-              'data-bi-btn': '', 'data-variant': 'ghost', disabled: busy === 'logout', onClick: doLogout,
-            }, busy === 'logout' ? '退出中…' : '退出登录'))
+              h('div', { 'data-bi-note': '', style: { marginBottom: 12, fontSize: 12.5, lineHeight: 1.7 } },
+                '点赞、投币、评论都记在账号上，所以得先知道你用的是谁。点下面的按钮出二维码，用 B站 手机 App 扫一下、手机上点「确认登录」就行。凭证只存在这台电脑的 ~/.dsh/bili-interactor/ 里，不上传任何地方。'),
+              h('button', {
+                'data-bi-btn': '', 'data-variant': 'primary', disabled: busy === 'login', onClick: startLogin,
+              }, busy === 'login' ? '正在生成二维码…' : '扫码登录'),
+              h('div', { 'data-bi-msg': '' }, login.hint))
           : null)
 
       /* ── 总览 ── */

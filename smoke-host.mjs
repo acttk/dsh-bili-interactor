@@ -123,6 +123,49 @@ if (run1.json.started !== false) throw new Error('关着却跑起来了')
 console.log('OK  run(disabled) 正确拒绝: ' + run1.json.error)
 await call('POST', '/api/bili-itx/config', { enabled: true })
 
+/* ── 登录视图：单一数据源，绝不能出现「图是旧的、key 是新的」 ── */
+const { writeFileSync: wf, rmSync: rmf } = await import('node:fs')
+const HOME_S = process.env.BILI_INTERACTOR_HOME
+const loginFile = HOME_S + '\\login.json'
+const qrFile = HOME_S + '\\qr.png'
+
+// 1) 没有码、也没登录时：pending=false / loggedIn=false
+try { rmf(HOME_S + '\\credential.json', { force: true }) } catch {}
+try { rmf(loginFile, { force: true }) } catch {}
+let view = await call('GET', '/api/bili-itx/login/view')
+if (view.json.pending !== false) throw new Error('没有码却报 pending=true')
+if (view.json.loggedIn !== false) throw new Error('不该显示已登录')
+if (view.json.image) throw new Error('没码却返回了图片')
+console.log('OK  /login/view 无码: pending=false loggedIn=false 无图')
+
+// 2) 放一张 1 分钟内的码：pending=true 且带图
+const pngTiny = Buffer.from('89504E470D0A1A0A0000000D4948445200000001000000010802000000907753DE', 'hex')
+wf(qrFile, pngTiny)
+wf(loginFile, JSON.stringify({ qrcodeKey: 'TESTKEY123', at: Date.now() - 30000 }), 'utf8')
+
+view = await call('GET', '/api/bili-itx/login/view')
+if (view.json.pending !== true) throw new Error('有码却报 pending=false')
+if (!String(view.json.image || '').startsWith('data:image/png;base64,')) throw new Error('没返回图片')
+if (!(view.json.leftSec > 100 && view.json.leftSec <= 165)) throw new Error('leftSec 不合理: ' + view.json.leftSec)
+console.log('OK  /login/view 有码: pending=true leftSec=' + view.json.leftSec + ' 有图')
+
+// 3) 过期的码：pending=false（避免展示一张死图）
+wf(loginFile, JSON.stringify({ qrcodeKey: 'OLDKEY', at: Date.now() - 200000 }), 'utf8')
+view = await call('GET', '/api/bili-itx/login/view')
+if (view.json.pending !== false) throw new Error('过期码却报 pending=true')
+if (view.json.image) throw new Error('过期码不该返回图片')
+console.log('OK  /login/view 过期码: pending=false 且不返回图片')
+
+// 4) 已登录时：loggedIn=true（即使还残留 qr.png 也不能影响）
+wf(HOME_S + '\\credential.json', JSON.stringify({ sessdata: 'x', bili_jct: 'y', buvid3: 'z', dedeuserid: '1' }), 'utf8')
+wf(qrFile, pngTiny)
+wf(loginFile, JSON.stringify({ qrcodeKey: 'K2', at: Date.now() - 10000 }), 'utf8')
+view = await call('GET', '/api/bili-itx/login/view')
+if (view.json.loggedIn !== true) throw new Error('有凭证却报 loggedIn=false')
+console.log('OK  /login/view 已登录: loggedIn=true（残留二维码不影响判定）')
+
+try { rmf(qrFile, { force: true }); rmf(loginFile, { force: true }) } catch {}
+
 const live = await call('GET', '/api/bili-itx/live')
 if (!live.json.ok) throw new Error('live 接口不对')
 console.log('OK  live: exists=' + live.json.exists + ' lines=' + live.json.lines.length)
