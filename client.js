@@ -716,6 +716,14 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
             })),
           h('div', { 'data-bi-row': '' },
             h('div', null,
+              h('div', { 'data-bi-lab': '' }, '每天最多回几条'),
+              h('div', { 'data-bi-note': '' }, '0 = 不限。B站 有评论频率上限，建议 30~50')),
+            h('input', {
+              'data-bi-input': '', type: 'number', min: 0, max: 9999, defaultValue: String(cfg.replyBackPerDay ?? 40),
+              onBlur: (e) => patch({ replyBackPerDay: Math.max(0, Number(e.target.value) || 0) }, '每日回复上限'),
+            })),
+          h('div', { 'data-bi-row': '' },
+            h('div', null,
               h('div', { 'data-bi-lab': '' }, '每隔多少分钟查一次'),
               h('div', { 'data-bi-note': '' }, '最小 1 分钟。查太勤容易被 B站 当脚本，楼多时会轮流查')),
             h('input', {
@@ -748,6 +756,9 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
                   parts.push(L.enabled ? '已开启' : '已关闭')
                   parts.push(L.armed ? '定时器已挂上' : '定时器没挂')
                   parts.push('每 ' + (L.everyMin || 20) + ' 分钟')
+                  if (L.todayDone !== undefined) {
+                    parts.push('今天已回 ' + L.todayDone + (L.perDay > 0 ? '/' + L.perDay : '（不限）'))
+                  }
                   if (L.lastAt) parts.push('上次检查 ' + localTime(L.lastAt))
                   else parts.push('还没检查过')
                   const last = L.last
