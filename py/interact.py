@@ -236,13 +236,20 @@ async def cmd_login_poll(args):
     if not key:
         fail("没有 qrcode_key", hint="先点一次「扫码登录」重新生成")
 
+    set_cookies = []
     try:
-        async with httpx.AsyncClient(timeout=15) as c:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=False) as c:
             r = await c.get(
                 "https://passport.bilibili.com/x/passport-login/web/qrcode/poll",
                 params={"qrcode_key": key, "source": "main-fe-header"},
                 headers=_ua_headers(),
             )
+            # ⭐ 凭证在 Set-Cookie 头里。以前只从 data.url 的 query 里找，
+            #    而那条 url 里根本没有 SESSDATA（那是别的域的游戏票）⇒ 永远拿不到。
+            try:
+                set_cookies = r.headers.get_list("set-cookie")
+            except Exception:
+                set_cookies = []
             j = r.json()
     except Exception as e:
         fail(f"查状态失败（网络）：{e}")
@@ -271,12 +278,21 @@ async def cmd_login_poll(args):
 
     from urllib.parse import parse_qs, urlparse
 
+    # 先从 Set-Cookie 里抠
+    jar = {}
+    for raw in set_cookies:
+        first = str(raw).split(";")[0] or ""
+        if "=" not in first:
+            continue
+        name, _, value = first.partition("=")
+        jar[name.strip()] = value.strip()
+
     qs = parse_qs(urlparse(cred_url).query)
     payload = {
-        "sessdata": (qs.get("SESSDATA") or [""])[0],
-        "bili_jct": (qs.get("bili_jct") or [""])[0],
-        "buvid3": (qs.get("buvid3") or [""])[0],
-        "dedeuserid": (qs.get("DedeUserID") or [""])[0],
+        "sessdata": jar.get("SESSDATA") or (qs.get("SESSDATA") or [""])[0],
+        "bili_jct": jar.get("bili_jct") or (qs.get("bili_jct") or [""])[0],
+        "buvid3": jar.get("buvid3") or (qs.get("buvid3") or [""])[0],
+        "dedeuserid": jar.get("DedeUserID") or (qs.get("DedeUserID") or [""])[0],
         "ac_time_value": d.get("refresh_token") or "",
         "savedAt": time.strftime("%Y-%m-%dT%H:%M:%S"),
     }
