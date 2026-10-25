@@ -901,26 +901,56 @@ async def cmd_digest(args):
     owner = ((info.get("owner") or {}).get("name") or "").strip()
 
     # 1) 字幕（有就用，最有价值）
+    #
+    # ⚠️ 必须走 get_player_info，不能用 get_subtitle！
+    #    get_subtitle 在本账号下一律返回空，而 player_info 里字幕是全的：
+    #      BV1x2Jq6NEbT → ai-zh 1 条
+    #      BV1T5nL6rEPb → ai-zh/ai-en/ai-ja 8 条
+    #    实测 4 个视频全都有字幕 —— 所以「真正看懂视频」根本不需要下载模型，
+    #    只有极少数连 AI 字幕都没生成的视频才需要本地转写兜底。
     subtitle_text = ""
     subtitle_lan = ""
+    subs = []
     try:
-        sr = await v.get_subtitle(cid=cid)
-        subs = ((sr or {}).get("subtitle") or {}).get("subtitles") or []
-        if subs:
+        pi = await v.get_player_info(cid=cid)
+        subs = ((pi or {}).get("subtitle") or {}).get("subtitles") or []
+    except Exception:
+        subs = []
+    if not subs:
+        # 兜底：老接口（有的号/有的视频只在这个接口里有）
+        try:
+            sr = await v.get_subtitle(cid=cid)
+            subs = ((sr or {}).get("subtitle") or {}).get("subtitles") or []
+        except Exception:
+            subs = []
+
+    if subs:
+        # 优先 AI 中文字幕，其次普通中文，再其次第一条
+        order = ["ai-zh", "zh-CN", "zh-Hans", "zh", "ai-en"]
+        pick = None
+        for want in order:
+            for s in subs:
+                if (s.get("lan") or "") == want:
+                    pick = s
+                    break
+            if pick:
+                break
+        if not pick:
             pick = subs[0]
-            subtitle_lan = pick.get("lan_doc") or ""
-            url = pick.get("subtitle_url") or ""
-            if url.startswith("//"):
-                url = "https:" + url
-            if url:
+        subtitle_lan = pick.get("lan_doc") or pick.get("lan") or ""
+        url = pick.get("subtitle_url") or ""
+        if url.startswith("//"):
+            url = "https:" + url
+        if url:
+            try:
                 import httpx
-                async with httpx.AsyncClient(timeout=20, headers=_ua_headers()) as c:
+                async with httpx.AsyncClient(timeout=25, headers=_ua_headers()) as c:
                     rr = await c.get(url)
                     j = rr.json()
                 body = j.get("body") or []
-                subtitle_text = "".join(str(x.get("content") or "") for x in body)
-    except Exception:
-        subtitle_text = ""
+                subtitle_text = "".join(str(x.get("content") or "") for x in body).strip()
+            except Exception:
+                subtitle_text = ""
 
     # 2) 弹幕池（拿不到字幕时的主要来源）
     danmaku = []
