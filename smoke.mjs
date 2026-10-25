@@ -203,6 +203,35 @@ if (t2.some((x) => x.includes('扫码登录'))) throw new Error('已登录却还
   }
   console.log('OK  能直接跳到对应评论（' + jump.length + ' 个 #reply 链接，例：' + jump[0] + '）')
 
+  // 「碰过的视频」：要有用 —— 能看到每条视频我说了什么，且不能是横着排的
+  tabs = findTabs(render())
+  const vidTab = tabs.find((t) => String((t.children && t.children[0]) || '') === '碰过的视频')
+  if (!vidTab) throw new Error('找不到「碰过的视频」页签')
+  vidTab.props.onClick()
+  const vidText = collect(render())
+  if (!vidText.some((x) => x.includes('今天碰过的视频'))) throw new Error('碰过的视频页签没渲染')
+  if (!vidText.some((x) => x.includes('我说过话的'))) throw new Error('没有「我说过话的」筛选')
+  if (!vidText.some((x) => x.includes('我在下面说过'))) {
+    throw new Error('碰过的视频里看不到「我说了什么」——这一页还是没用')
+  }
+  if (!vidText.some((x) => x.includes('次动作'))) throw new Error('没有动作总数概览')
+  // 布局必须是竖排卡片，不能再用不换行的 flex 行
+  const hasOldItem = (() => {
+    let found = false
+    const walk = (n) => {
+      if (n == null || found) return
+      if (Array.isArray(n)) return n.forEach(walk)
+      if (typeof n !== 'object') return
+      if (typeof n.tag === 'function') { try { walk(n.tag(n.props || {})) } catch { /* ignore */ } ; return }
+      if (n.props && n.props['data-bi-item'] !== undefined) { found = true; return }
+      if (n.children) n.children.forEach(walk)
+    }
+    walk(render())
+    return found
+  })()
+  if (hasOldItem) throw new Error('「碰过的视频」还在用旧的 data-bi-item 横排布局（会横向溢出）')
+  console.log('OK  「碰过的视频」能看出说了什么（' + vidText.length + ' 个节点，竖排卡片）')
+
   // 「记忆」页签
   tabs = findTabs(render())
   const memTab = tabs.find((t) => String((t.children && t.children[0]) || '') === '记忆')

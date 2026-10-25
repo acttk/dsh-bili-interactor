@@ -165,6 +165,8 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
       const [preview, setPreview] = React.useState(null)
       // 可见性缓存：rpid -> {public, hint}。B站 收了不代表别人看得见，得单独查。
       const [vis, setVis] = React.useState({})
+      // 「碰过的视频」的筛选：全部 / 我说过话的
+      const [videoFilter, setVideoFilter] = React.useState('all')
       const [err, setErr] = React.useState('')
       const [tab, setTab] = React.useState('overview')
       const [busy, setBusy] = React.useState('')
@@ -687,30 +689,132 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
             ? h('div', { 'data-bi-empty': '' }, '还没有记忆。跑一轮（要开着「边刷边学」）就会开始攒')
             : (memoSrc.items || []).map(memoItem)))
 
-      /* ── 互动（今天碰过的视频） ── */
+      /* ── 碰过的视频 ──
+       * 以前这一页只有「BVID + 标题 + 一排动作标签」：
+       *   看不出这条视频我说了什么、值不值得回看，纯粹占地方；
+       *   而且标签不换行，十几条视频能把整行撑出容器 → 横向滚动条。
+       * 现在每条视频一张卡片：标题（两行截断）、UP、时间、各种动作的次数、
+       * 以及我在这条视频下最近说过的话（带直达链接）。全部竖向排，不再横滚。
+       */
       const videos = t.videos || []
+      const VIDEO_FILTER = [
+        ['all', '全部'],
+        ['talk', '我说过话的'],
+      ]
+      const shownVideos = videos.filter((v) => (videoFilter === 'talk' ? (v.talkTotal || 0) > 0 : true))
+      const talkSum = videos.reduce((n, v) => n + (v.talkTotal || 0), 0)
+      const actSum = videos.reduce((n, v) => n + (v.total || 0), 0)
+
+      const videoCard = (v, idx) => {
+        const counts = v.counts || {}
+        const chips = Object.keys(counts)
+          .filter((k) => KIND_LABEL[k])
+          .sort((a, b) => counts[b] - counts[a])
+          .map((k) => h('span', {
+            key: k,
+            'data-bi-chip': '',
+            style: { color: KIND_COLOR[k] || 'var(--bi-dim)', flex: '0 0 auto' },
+            title: KIND_LABEL[k],
+          }, KIND_LABEL[k] + ' ' + counts[k]))
+
+        return h('div', {
+          key: v.bvid,
+          style: {
+            padding: '12px 0',
+            borderTop: idx ? '1px solid var(--bi-line)' : 'none',
+            minWidth: 0,
+          },
+        },
+          // 标题：最多两行，超了省略号。wrap 住，绝不再撑宽
+          h('div', {
+            style: {
+              fontSize: 13.5, lineHeight: 1.6, fontWeight: 600,
+              display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
+              overflow: 'hidden', overflowWrap: 'anywhere', wordBreak: 'break-word',
+            },
+          }, v.title || '(无标题)'),
+
+          // 元信息：UP · 最后动作时间 · BVID · 两个链接。全部可换行
+          h('div', {
+            style: {
+              display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap',
+              marginTop: 5, fontSize: 11.5, color: 'var(--bi-mute)', minWidth: 0,
+            },
+          },
+            v.up ? h('span', { style: { overflowWrap: 'anywhere' } }, v.up) : null,
+            v.lastTs ? h('span', null, localTime(v.lastTs)) : null,
+            h('a', {
+              'data-bi-bv': '', href: v.url + '/', target: '_blank', rel: 'noreferrer',
+              title: '打开视频页',
+            }, v.bvid),
+            v.lastRpid
+              ? h('a', {
+                  'data-bi-bv': '', href: cmtUrl(v.bvid, v.lastRpid),
+                  target: '_blank', rel: 'noreferrer', style: { color: '#22d3ee' },
+                  title: '滚到我在这条视频下的最后一楼',
+                }, '跳到评论')
+              : null),
+
+          // 动作次数
+          chips.length
+            ? h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 7 } }, chips)
+            : null,
+
+          // 我说过的话：默认只显示最近 2 条，点开看全部 3 条
+          (v.sayings || []).length
+            ? h('div', { style: { marginTop: 9 } },
+                h('div', { 'data-bi-note': '', style: { marginBottom: 4 } },
+                  '我在下面说过 ' + (v.talkTotal || 0) + ' 条' +
+                  ((v.sayings || []).length < (v.talkTotal || 0) ? '（这里显示最近 ' + (v.sayings || []).length + ' 条）' : '')),
+                (v.sayings || []).map((sy, i) => h('div', {
+                  key: i,
+                  style: {
+                    display: 'flex', gap: 8, alignItems: 'flex-start', flexWrap: 'wrap',
+                    padding: '4px 0', minWidth: 0,
+                  },
+                },
+                  h('span', {
+                    'data-bi-chip': '',
+                    style: { color: KIND_COLOR[sy.kind] || 'var(--bi-dim)', flex: '0 0 auto' },
+                  }, KIND_LABEL[sy.kind] || sy.kind),
+                  sy.ok === false
+                    ? h('span', { 'data-bi-chip': '', style: { color: '#f87171' } }, '没发出')
+                    : null,
+                  h('span', {
+                    style: {
+                      flex: '1 1 200px', minWidth: 0, fontSize: 12.5, lineHeight: 1.7,
+                      overflowWrap: 'anywhere', wordBreak: 'break-word',
+                    },
+                  }, (sy.toName ? '回 ' + sy.toName + '：' : '') + sy.text),
+                  sy.jump
+                    ? h('a', {
+                        'data-bi-bv': '', href: cmtUrl(v.bvid, sy.jump),
+                        target: '_blank', rel: 'noreferrer',
+                        style: { flex: '0 0 auto', color: '#22d3ee' },
+                      }, '去这条')
+                    : null)))
+            : h('div', { 'data-bi-note': '', style: { marginTop: 8 } }, '这条视频下没说话（只点了赞/投币之类）'))
+      }
+
       const interact = h('div', null,
         h('div', { 'data-bi-card': '' },
           h('div', { 'data-bi-h2': '' }, '今天碰过的视频（' + videos.length + '）'),
+          h('div', { 'data-bi-note': '', style: { marginTop: 4, marginBottom: 10, lineHeight: 1.7 } },
+            '共 ' + actSum + ' 次动作，其中 ' + talkSum + ' 条是说过的话。按最近动过的排前面。'),
+          videos.length
+            ? h('div', { style: { display: 'flex', gap: 8, marginBottom: 6, flexWrap: 'wrap' } },
+                VIDEO_FILTER.map(([k, lab]) => h('button', {
+                  key: k,
+                  'data-bi-btn': '', 'data-variant': videoFilter === k ? 'primary' : 'ghost',
+                  style: { padding: '4px 12px', fontSize: 12 },
+                  onClick: () => setVideoFilter(k),
+                }, lab)))
+            : null,
           videos.length === 0
             ? h('div', { 'data-bi-empty': '' }, '今天还没碰过任何视频')
-            : videos.map((v) => h('div', { 'data-bi-item': '', key: v.bvid },
-                h('a', { 'data-bi-bv': '', href: v.url + '/', target: '_blank', rel: 'noreferrer' }, v.bvid),
-                v.lastRpid
-                  ? h('a', {
-                      'data-bi-bv': '', href: cmtUrl(v.bvid, v.lastRpid),
-                      target: '_blank', rel: 'noreferrer', style: { color: '#22d3ee', marginLeft: 8 },
-                      title: '直接滚到我在这条视频下的最后一条评论',
-                    }, '跳到评论')
-                  : null,
-                h('div', { 'data-bi-vt': '' },
-                  h('div', null, v.title || '(无标题)'),
-                  h('div', { 'data-bi-vup': '' }, v.up || '')),
-                (v.acts || []).map((a, i) => h('span', {
-                  'data-bi-chip': '', key: i, style: { color: KIND_COLOR[a] || 'var(--bi-dim)' },
-                }, KIND_LABEL[a] || a))
-              ))
-        )
+            : (shownVideos.length === 0
+                ? h('div', { 'data-bi-empty': '' }, '这个筛选下没有视频')
+                : shownVideos.map(videoCard)))
       )
 
       /* ── 过程（完整实录） ── */
