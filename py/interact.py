@@ -740,6 +740,71 @@ async def cmd_comment(args):
     out(interpret_comment_response(resp, args.text))
 
 
+def _asr_paths():
+    """找转写环境。
+
+    优先复用「刷B站」插件已经装好的那份（省得用户再下 1GB 模型），
+    其次看本插件自己的家目录。
+    """
+    import os
+    from pathlib import Path as _P
+
+    home = _P(os.environ.get("BILI_INTERACTOR_HOME") or (OWN_HOME))
+    dsh = home.parent
+    is_win = os.name == "nt"
+    cands = []
+    for root in (dsh / "bili-duty", home):
+        py = root / (".venv-asr/Scripts/python.exe" if is_win else ".venv-asr/bin/python")
+        script = root / "asr.py"
+        cands.append((py, script))
+    for py, script in cands:
+        if py.exists() and script.exists():
+            return py, script
+    return None, None
+
+
+async def cmd_transcribe(args):
+    """把视频的语音转成文字（没字幕时用）。
+
+    ⚠️ 慢：第一次要加载模型（几十秒），一条 9 分钟的视频约 2 分钟。
+    转写不出东西是正常结果（纯音乐/无声演示），不是坏了 —— 别重试。
+    """
+    import asyncio
+
+    py, script = _asr_paths()
+    if not py:
+        out({
+            "ok": False,
+            "error": "没装本地转写环境（找不到 .venv-asr 或 asr.py）。"
+                     "可以在「刷B站」插件里点「装转写依赖」，本插件会复用那份。",
+        })
+
+    bvid = args.bvid
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            str(py), str(script), bvid,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=args.timeout)
+        text = (stdout or b"").decode("utf-8", "replace").strip()
+    except asyncio.TimeoutError:
+        out({"ok": False, "error": f"转写超时（{args.timeout} 秒）"})
+    except Exception as e:
+        out({"ok": False, "error": f"转写失败：{e}"})
+
+    # 只有一行「字幕byXX」这类署名 = 这条视频没有语音
+    looks_empty = (not text) or len(text) < 20 or text.count("\n") == 0 and len(text) < 40
+    out({
+        "ok": True,
+        "bvid": bvid,
+        "chars": len(text),
+        "text": text[: args.max_chars],
+        "empty": looks_empty,
+        "hint": "这条视频没有语音（纯音乐/无声演示），按跳过处理" if looks_empty else "",
+    })
+
+
 async def cmd_watch(args):
     """真的看一遍视频：上报开始观看 + 按进度上报。
 
@@ -1201,6 +1266,11 @@ def build_parser():
     cm.add_argument("--limit", type=int, default=20)
     cm.add_argument("--mine", action="store_true")   # 只要我自己发的
 
+    tr = sub.add_parser("transcribe")         # 本地转写（Whisper，慢，没字幕时用）
+    tr.add_argument("--bvid", required=True)
+    tr.add_argument("--timeout", type=int, default=420)
+    tr.add_argument("--max-chars", type=int, default=4000)
+
     w = sub.add_parser("watch")               # 真的看一遍（会产生观看记录！）
     w.add_argument("--bvid", required=True)
     w.add_argument("--style", default="fast", choices=["fast", "real"])
@@ -1244,6 +1314,7 @@ CMDS = {
     "sub-replies": cmd_sub_replies,
     "visible": cmd_visible,
     "watch": cmd_watch,
+    "transcribe": cmd_transcribe,
     "digest": cmd_digest,
     "uidname": cmd_uidname,
     "dm": cmd_dm,
