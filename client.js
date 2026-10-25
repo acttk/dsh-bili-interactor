@@ -717,7 +717,7 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
           h('div', { 'data-bi-row': '' },
             h('div', null,
               h('div', { 'data-bi-lab': '' }, '每天最多回几条'),
-              h('div', { 'data-bi-note': '' }, '0 = 不限。B站 有评论频率上限，建议 30~50')),
+              h('div', { 'data-bi-note': '' }, '默认 0 = 不限。只有你自己想设才填')),
             h('input', {
               'data-bi-input': '', type: 'number', min: 0, max: 9999, defaultValue: String(cfg.replyBackPerDay ?? 40),
               onBlur: (e) => patch({ replyBackPerDay: Math.max(0, Number(e.target.value) || 0) }, '每日回复上限'),
@@ -731,9 +731,15 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
               onBlur: (e) => patch({ listenIntervalMin: Math.max(1, Number(e.target.value) || 1) }, '检查间隔'),
             })),
           h('div', { 'data-bi-row': '' },
-            h('div', null,
-              h('div', { 'data-bi-lab': '' }, '每轮最多查几个楼'),
-              h('div', { 'data-bi-note': '' }, '楼很多时轮流查，避免一分钟几十次请求被风控')),
+            h('div', { style: { flex: '1 1 auto' } },
+              h('div', { 'data-bi-lab': '' }, '每次检查看几条我的评论'),
+              h('div', { 'data-bi-note': '', style: { lineHeight: 1.75 } },
+                '你发过的**每条评论**算一条，它下面别人回的都挂在它下面。' +
+                (st.listener && st.listener.totalThreads
+                  ? `你现在有 ${st.listener.totalThreads} 条，每次看 ${cfg.listenMaxThreadsPerTick ?? 15} 条，下一轮接着往下轮。`
+                  : '') +
+                `设成 ${cfg.listenMaxThreadsPerTick ?? 15} 就意味着**每分钟最多 ${cfg.listenMaxThreadsPerTick ?? 15} 次请求**，` +
+                '设太大容易被 B站 当脚本。楼不多的话填个比总数大的值也没关系（不会超）。')),
             h('input', {
               'data-bi-input': '', type: 'number', min: 1, max: 100, defaultValue: String(cfg.listenMaxThreadsPerTick ?? 15),
               onBlur: (e) => patch({ listenMaxThreadsPerTick: Math.max(1, Number(e.target.value) || 15) }, '每轮楼数'),
@@ -759,6 +765,7 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
                   if (L.todayDone !== undefined) {
                     parts.push('今天已回 ' + L.todayDone + (L.perDay > 0 ? '/' + L.perDay : '（不限）'))
                   }
+                  if (L.totalThreads) parts.push('我的评论共 ' + L.totalThreads + ' 条')
                   if (L.lastAt) parts.push('上次检查 ' + localTime(L.lastAt))
                   else parts.push('还没检查过')
                   const last = L.last
