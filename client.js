@@ -64,7 +64,7 @@ const cmtUrl = (bvid, rpid) => {
   return rpid ? base + '#reply' + String(rpid) : base
 }
 
-const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku: '弹幕', follow: '关注', comment: '评论', reply: '回评论', replyback: '回我', dm: '私信' }
+const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku: '弹幕', follow: '关注', comment: '评论', reply: '回评论', replyback: '接着回', dm: '私信' }
     const KIND_COLOR = { like: '#f472b6', coin: '#fbbf24', favorite: '#38bdf8', danmaku: '#a78bfa', follow: '#34d399', comment: '#fb923c', reply: '#22d3ee', replyback: '#4ade80', dm: '#f87171' }
     const TAGC = {
       '阶段': '#60a5fa', '思考': '#c084fc', '候选': '#94a3b8',
@@ -535,7 +535,7 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
               ).join('\n'))),
       )
 
-      /* ── 它说了什么（评论 / 回复 / 回我 全文） ──
+      /* ── 它说了什么（评论 / 回评论 / 接着回 / 私信 全文） ──
        * 用户要能直接看到大肥鱼到底发了什么话，而不是只有一个"评论 ✓"。
        */
       const talkRows = (st.recent || [])
@@ -603,7 +603,7 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
         h('div', { 'data-bi-card': '' },
           h('div', { 'data-bi-h2': '' }, '它说了什么（' + talkRows.length + ' 条）'),
           h('div', { 'data-bi-note': '', style: { marginBottom: 10, lineHeight: 1.75 } },
-            '评论、回别人、回我、私信 —— 全部原文都在这。' +
+            '评论、回别人的评论、别人回我之后我接着回、私信 —— 全部原文都在这。' +
             '「跳到这一楼」会落到那条顶层评论；如果回复嵌在楼中楼深处，' +
             'B站 不会自动展开，这时点「复制正文」再在页面里 Ctrl+F 粘进去最准。'),
           // ⚠️ B站 返回成功 ≠ 别人看得见（新号会进审核/折叠）。
@@ -799,8 +799,12 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
       const interact = h('div', null,
         h('div', { 'data-bi-card': '' },
           h('div', { 'data-bi-h2': '' }, '今天碰过的视频（' + videos.length + '）'),
-          h('div', { 'data-bi-note': '', style: { marginTop: 4, marginBottom: 10, lineHeight: 1.7 } },
+          h('div', { 'data-bi-note': '', style: { marginTop: 4, marginBottom: 8, lineHeight: 1.7 } },
             '共 ' + actSum + ' 次动作，其中 ' + talkSum + ' 条是说过的话。按最近动过的排前面。'),
+          h('div', { 'data-bi-note': '', style: { marginBottom: 10, lineHeight: 1.9 } },
+            '· 回评论 = 我主动去别人评论下面回（跑一轮时发的）',
+            h('br'),
+            '· 接着回 = 别人先回了我发过的评论，我再回他（后台监听发的）'),
           videos.length
             ? h('div', { style: { display: 'flex', gap: 8, marginBottom: 6, flexWrap: 'wrap' } },
                 VIDEO_FILTER.map(([k, lab]) => h('button', {
