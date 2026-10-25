@@ -740,6 +740,152 @@ async def cmd_comment(args):
     out(interpret_comment_response(resp, args.text))
 
 
+async def cmd_watch(args):
+    """真的看一遍视频：上报开始观看 + 按进度上报。
+
+    ⚠️ 这个命令会**真的产生观看记录**（进历史、计入播放），不是空跑。
+    这也是「刷视频」和「只读标题」的分界线 —— 之前只有后者。
+
+    节奏：
+      --style real  按真实节奏（每 15 秒上报一次，按视频时长走完）—— 最像真人，但很慢
+      --style fast  不等待，连续上报若干次进度（默认）—— 快，但真实时长对不上，有被识别风险
+    """
+    import asyncio
+    from bilibili_api import video as vmod
+
+    cred = load_credential()
+    v = video_obj(args.bvid, cred)
+    info = await v.get_info()
+    dur = int(info.get("duration") or 0)
+    if dur <= 0:
+        fail("拿不到视频时长，没法模拟观看")
+
+    style = (args.style or "fast").lower()
+    started = False
+    try:
+        r = await v.report_start_watching()
+        started = r.get("code") == 0
+    except Exception as e:
+        out({"ok": False, "error": f"开始观看失败：{e}"})
+
+    reports = 0
+    failed = 0
+    if style == "real":
+        step = 15
+        pos = step
+        while pos < dur:
+            try:
+                rr = await v.report_watch_history(progress=pos)
+                if rr.get("code") == 0:
+                    reports += 1
+                else:
+                    failed += 1
+            except Exception:
+                failed += 1
+            await asyncio.sleep(step)
+            pos += step
+    else:
+        # 快速模式：分 4 段推进到接近结尾，段间短暂停顿，别一眼假
+        for frac in (0.15, 0.35, 0.6, 0.85):
+            pos = max(1, int(dur * frac))
+            try:
+                rr = await v.report_watch_history(progress=pos)
+                if rr.get("code") == 0:
+                    reports += 1
+                else:
+                    failed += 1
+            except Exception:
+                failed += 1
+            await asyncio.sleep(1.2)
+
+    out({
+        "ok": True,
+        "bvid": args.bvid,
+        "duration": dur,
+        "style": style,
+        "started": started,
+        "reports": reports,
+        "failed": failed,
+        "watched": reports > 0,
+    })
+
+
+async def cmd_digest(args):
+    """把「视频里到底在说什么」摘出来，供写评论用。
+
+    优先级：字幕全文 > 弹幕池 > 只有简介。
+    弹幕池其实很有信息量 —— 观众会把视频里的关键点、坑、梗直接打在弹幕里。
+    """
+    import asyncio
+    from bilibili_api import video as vmod
+
+    cred = load_credential()
+    v = video_obj(args.bvid, cred)
+    info = await v.get_info()
+    cid = info.get("cid") or (info.get("pages") or [{}])[0].get("cid")
+    if not cid:
+        fail("拿不到 cid")
+
+    title = (info.get("title") or "").strip()
+    desc = (info.get("desc") or "").strip()
+    tname = (info.get("tname") or "").strip()
+    dur = int(info.get("duration") or 0)
+    owner = ((info.get("owner") or {}).get("name") or "").strip()
+
+    # 1) 字幕（有就用，最有价值）
+    subtitle_text = ""
+    subtitle_lan = ""
+    try:
+        sr = await v.get_subtitle(cid=cid)
+        subs = ((sr or {}).get("subtitle") or {}).get("subtitles") or []
+        if subs:
+            pick = subs[0]
+            subtitle_lan = pick.get("lan_doc") or ""
+            url = pick.get("subtitle_url") or ""
+            if url.startswith("//"):
+                url = "https:" + url
+            if url:
+                import httpx
+                async with httpx.AsyncClient(timeout=20, headers=_ua_headers()) as c:
+                    rr = await c.get(url)
+                    j = rr.json()
+                body = j.get("body") or []
+                subtitle_text = "".join(str(x.get("content") or "") for x in body)
+    except Exception:
+        subtitle_text = ""
+
+    # 2) 弹幕池（拿不到字幕时的主要来源）
+    danmaku = []
+    try:
+        dms = await v.get_danmakus(cid=cid)
+        # 按出现频次排，越多人打的越可能是重点
+        counts = {}
+        for d in dms:
+            t = (d.text or "").strip()
+            if 2 <= len(t) <= 40:
+                counts[t] = counts.get(t, 0) + 1
+        danmaku = [t for t, _ in sorted(counts.items(), key=lambda kv: -kv[1])][:args.max_danmaku]
+        danmaku_total = len(dms)
+    except Exception:
+        danmaku_total = 0
+
+    out({
+        "ok": True,
+        "bvid": args.bvid,
+        "title": title,
+        "up": owner,
+        "tname": tname,
+        "duration": dur,
+        "desc": desc[:400],
+        "hasSubtitle": bool(subtitle_text),
+        "subtitleLan": subtitle_lan,
+        "subtitle": subtitle_text[:args.max_subtitle_chars],
+        "danmakuTotal": danmaku_total,
+        "danmaku": danmaku,
+        "source": "subtitle" if subtitle_text else ("danmaku" if danmaku else "title-only"),
+    })
+
+
 async def cmd_visible(args):
     """查某条评论「别人到底看不看得见」。
 
@@ -1055,6 +1201,15 @@ def build_parser():
     cm.add_argument("--limit", type=int, default=20)
     cm.add_argument("--mine", action="store_true")   # 只要我自己发的
 
+    w = sub.add_parser("watch")               # 真的看一遍（会产生观看记录！）
+    w.add_argument("--bvid", required=True)
+    w.add_argument("--style", default="fast", choices=["fast", "real"])
+
+    dg = sub.add_parser("digest")             # 摘要视频内容（弹幕/字幕/简介，只读）
+    dg.add_argument("--bvid", required=True)
+    dg.add_argument("--max-danmaku", type=int, default=40)
+    dg.add_argument("--max-subtitle-chars", type=int, default=2000)
+
     vs = sub.add_parser("visible")            # 查某条评论别人看不看得见（只读）
     vs.add_argument("--bvid", required=True)
     vs.add_argument("--rpid", required=True)
@@ -1088,6 +1243,8 @@ CMDS = {
     "comments": cmd_comments,
     "sub-replies": cmd_sub_replies,
     "visible": cmd_visible,
+    "watch": cmd_watch,
+    "digest": cmd_digest,
     "uidname": cmd_uidname,
     "dm": cmd_dm,
     "recall-danmaku": cmd_recall_danmaku,

@@ -858,6 +858,8 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
             ['doFavorite', '收藏', '需要先在上面填收藏夹 ID，否则不会收'],
             ['doComment', '在评论区留言', '★ 重点功能：发一条顶层评论'],
             ['doReplyComment', '回别人的评论', '在评论区挑几条回'],
+            ['doWatch', '真的看一遍', '会真的上报观看进度，进你的观看历史、计入播放量'],
+            ['doDigest', '先摘内容再说话', '拿字幕和弹幕当材料，评论才不会只吐槽标题'],
             ['doDanmaku', '发弹幕', '发出去就收不回，想清楚再开'],
             ['doFollow', '关注 UP', '最容易被人发现的那一个，默认关'],
           ].map(([k, lab, note]) => h('div', { 'data-bi-row': '', key: k },
@@ -873,6 +875,18 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
               'data-bi-input': '', type: 'text', inputMode: 'numeric', defaultValue: String(cfg.favoriteId || 0),
               onBlur: (e) => patch({ favoriteId: Number(String(e.target.value).replace(/[^\d]/g, '')) || 0 }, '收藏夹'),
             })),
+          h('div', { 'data-bi-row': '' },
+            h('div', { style: { flex: '1 1 auto' } },
+              h('div', { 'data-bi-lab': '' }, '观看节奏'),
+              h('div', { 'data-bi-note': '', style: { lineHeight: 1.75 } },
+                (cfg.watchStyle || 'fast') === 'real'
+                  ? '真实节奏：按视频长度慢慢上报，最像真人，但一条视频要等好几分钟'
+                  : '快速：几秒内上报完。快，但真实观看时长对不上，更容易被识别')),
+            h('button', {
+              'data-bi-btn': '', 'data-variant': 'ghost',
+              style: { padding: '5px 12px', fontSize: 12 },
+              onClick: () => patch({ watchStyle: (cfg.watchStyle || 'fast') === 'real' ? 'fast' : 'real' }, '观看节奏'),
+            }, (cfg.watchStyle || 'fast') === 'real' ? '切成快速' : '切成真实')),
           h('div', { 'data-bi-row': '' },
             h('div', null,
               h('div', { 'data-bi-lab': '' }, '每条投几个币'),
