@@ -272,8 +272,10 @@ if (texts.some((x) => String(x).includes('[object Object]'))) {
   throw new Error('[object Object] 漏到界面上了 —— 模板里拼了对象而不是它的某个字段')
 }
 
-if (!texts.some((x) => x.includes('环境自检'))) throw new Error('总览里没有「环境自检」卡片')
-if (!texts.some((x) => x.includes('检查环境'))) throw new Error('没有「检查环境」按钮')
+// 环境状态必须在总览上可见（全绿一行 / 有问题展开 / 还没探测完 三种之一）
+if (!texts.some((x) => x.includes('环境就绪') || x.includes('环境还没好') || x.includes('正在检查环境'))) {
+  throw new Error('总览里看不到环境状态')
+}
 console.log('OK  带数据渲染通过：' + texts.length + ' 个文本节点')
 console.log('OK  quota=' + JSON.stringify(state.quota))
 console.log('OK  live 行数=' + state.live.lines.length + ' / ledger 条数=' + state.recent.length)

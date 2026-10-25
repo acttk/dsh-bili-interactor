@@ -170,6 +170,9 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
       // 宿主加载时会自动跑一次自检并塞进 st.env —— 用户不用点就能看到
       const envAuto = st && st.env ? st.env : null
       const doctorView = doctor || envAuto
+      const [showEnvDetail, setShowEnvDetail] = React.useState(false)
+      // 一键装依赖的进度（宿主那边边装边报）
+      const [setup, setSetup] = React.useState(null)
       // 「碰过的视频」的筛选：全部 / 我说过话的
       const [videoFilter, setVideoFilter] = React.useState('all')
       const [err, setErr] = React.useState('')
@@ -202,6 +205,32 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
           setBusy('')
         }
       }, [])
+
+      const startInstallDeps = React.useCallback(async () => {
+        setBusy('deps')
+        try {
+          const r = await fetch(API + '/setup/deps', { method: 'POST', credentials: 'same-origin' })
+          const j = await r.json()
+          if (j && j.setup) setSetup(j.setup)
+        } catch (e) {
+          setSetup({ running: false, step: '', log: [], error: String(e), done: false })
+        } finally { setBusy('') }
+      }, [])
+
+      // 装依赖时轮询进度；装完自动重新自检
+      React.useEffect(() => {
+        const t = setInterval(async () => {
+          try {
+            const r = await fetch(API + '/setup/status', { credentials: 'same-origin' })
+            const j = await r.json()
+            if (j && j.setup) {
+              setSetup(j.setup)
+              if (!j.setup.running && j.setup.done) runDoctor()
+            }
+          } catch { /* ignore */ }
+        }, 1500)
+        return () => clearInterval(t)
+      }, [runDoctor])
 
       const loadVis = React.useCallback(async () => {
         try {
@@ -474,43 +503,85 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
       /* ── 总览 ── */
       const overview = h('div', null,
         // 自检：新用户最常卡在「忘了 pip install」，这里直接给能复制的命令
-        h('div', { 'data-bi-card': '', style: doctorView && doctorView.items && doctorView.items.some((x) => !x.ok) ? { borderColor: 'rgba(251,191,36,.5)' } : null },
-          h('div', { 'data-bi-h2': '' }, '环境自检'),
-          h('div', { 'data-bi-note': '', style: { marginBottom: 10, lineHeight: 1.7 } },
-            doctorView
-              ? (doctorView.items.every((x) => x.ok)
-                  ? '全部就绪，可以开跑了。'
-                  : '下面这些还没弄好，按提示补一下就能用：')
-              : '点一下检查这台机器能不能跑这个插件（Python 依赖 / 登录 / API key）。'),
-          h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: doctorView ? 10 : 0 } },
-            h('button', {
-              'data-bi-btn': '', 'data-variant': doctorView ? 'ghost' : 'primary',
-              disabled: busy === 'doctor',
-              onClick: runDoctor,
-            }, busy === 'doctor' ? '检查中…' : (doctorView ? '重新检查' : '检查环境')),
-            doctorView && doctorView.pyError
-              ? h('span', { 'data-bi-note': '', style: { color: '#f87171', flex: '1 1 200px' } }, 'Python 跑不起来：' + doctorView.pyError)
-              : null),
-          doctorView && doctorView.items
-            ? h('div', null, doctorView.items.map((it) => h('div', {
-                key: it.name,
-                style: { padding: '6px 0', borderTop: '1px solid var(--bi-line)', fontSize: 12.5, lineHeight: 1.7 },
-              },
-                h('div', { style: { display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' } },
-                  h('span', { style: { color: it.ok ? '#4ade80' : '#f87171', flex: '0 0 auto', fontWeight: 700 } },
-                    it.ok ? '✓' : '✗'),
-                  h('span', { style: { fontWeight: 600, flex: '0 0 auto' } }, it.name),
-                  h('span', { 'data-bi-note': '', style: { flex: '1 1 160px', overflowWrap: 'anywhere' } }, it.detail)),
-                !it.ok && it.fix
-                  ? h('code', {
-                      style: {
-                        display: 'block', marginTop: 4, marginLeft: 18, padding: '5px 8px',
-                        background: 'rgba(255,255,255,.06)', borderRadius: 6, fontSize: 11.5,
-                        overflowWrap: 'anywhere', userSelect: 'all',
-                      },
-                    }, it.fix)
-                  : null)))
-            : null),
+        // ── 环境状态：全绿时只占一行，别摆一张检查表让人数 ──
+        (() => {
+          const env = doctorView
+          const bad = env && env.items ? env.items.filter((x) => !x.ok) : []
+          const pyMissing = bad.some((x) => /^bilibili-api|^httpx$|^qrcode$|^pillow$/.test(x.name))
+
+          // 全部就绪：一行搞定
+          if (env && env.items && !bad.length) {
+            const py = (env.items.find((x) => x.name === 'Python') || {}).detail || ''
+            return h('div', {
+              'data-bi-card': '',
+              style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '10px 14px' },
+            },
+              h('span', { style: { color: '#4ade80', fontWeight: 700, flex: '0 0 auto' } }, '✓ 环境就绪'),
+              h('span', { 'data-bi-note': '', style: { flex: '1 1 200px' } },
+                `Python ${py} · 已登录 · ${st.llm ? 'key 已找到' : '没配 key（用模板说话）'}`),
+              h('button', {
+                'data-bi-btn': '', 'data-variant': 'ghost',
+                style: { padding: '3px 10px', fontSize: 11.5 },
+                onClick: () => setShowEnvDetail((v) => !v),
+              }, showEnvDetail ? '收起' : '详情'))
+          }
+
+          // 有问题（或者还没探测完）：只列失败的 + 一键装
+          return h('div', { 'data-bi-card': '', style: { borderColor: 'rgba(251,191,36,.5)' } },
+            h('div', { 'data-bi-h2': '' }, env ? '环境还没好' : '正在检查环境…'),
+            env
+              ? h('div', { 'data-bi-note': '', style: { marginBottom: 10, lineHeight: 1.7 } },
+                  env.pyError ? 'Python 跑不起来：' + env.pyError : '下面这些补上就能用了：')
+              : h('div', { 'data-bi-note': '', style: { marginBottom: 10 } }, '稍等几秒，或者点下面的按钮。'),
+
+            // 缺 Python 包 → 一键装，不让用户碰 pip
+            pyMissing
+              ? h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 } },
+                  h('button', {
+                    'data-bi-btn': '', 'data-variant': 'primary',
+                    disabled: (setup && setup.running) || busy === 'deps',
+                    onClick: startInstallDeps,
+                  }, setup && setup.running ? '安装中…' : '一键安装依赖'),
+                  h('span', { 'data-bi-note': '', style: { flex: '1 1 220px' } },
+                    '插件会自己建环境、自己装，你不用敲命令'))
+              : null,
+
+            // 安装进度
+            setup && (setup.running || setup.error || setup.done)
+              ? h('div', { style: { marginBottom: 10, padding: '8px 10px', borderRadius: 8, background: 'rgba(255,255,255,.05)' } },
+                  h('div', { 'data-bi-note': '', style: { marginBottom: 4 } },
+                    setup.error ? '装失败了：' + setup.error : (setup.done ? '装好了' : '正在：' + setup.step)),
+                  (setup.log || []).slice(-6).map((l, i) => h('div', {
+                    key: i,
+                    style: { fontSize: 11, opacity: .7, fontFamily: 'Consolas,monospace', overflowWrap: 'anywhere' },
+                  }, l)))
+              : null,
+
+            bad.length
+              ? h('div', null, bad.map((it) => h('div', {
+                  key: it.name,
+                  style: { padding: '6px 0', borderTop: '1px solid var(--bi-line)', fontSize: 12.5, lineHeight: 1.7 },
+                },
+                  h('div', { style: { display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' } },
+                    h('span', { style: { color: '#f87171', flex: '0 0 auto', fontWeight: 700 } }, '✗'),
+                    h('span', { style: { fontWeight: 600, flex: '0 0 auto' } }, it.name),
+                    h('span', { 'data-bi-note': '', style: { flex: '1 1 160px', overflowWrap: 'anywhere' } }, it.detail)),
+                  it.fix
+                    ? h('code', {
+                        style: {
+                          display: 'block', marginTop: 4, marginLeft: 18, padding: '5px 8px',
+                          background: 'rgba(255,255,255,.06)', borderRadius: 6, fontSize: 11.5,
+                          overflowWrap: 'anywhere', userSelect: 'all',
+                        },
+                      }, it.fix)
+                    : null)))
+              : h('button', {
+                  'data-bi-btn': '', 'data-variant': 'ghost',
+                  disabled: busy === 'doctor',
+                  onClick: runDoctor,
+                }, busy === 'doctor' ? '检查中…' : '检查环境'))
+        })(),
+
         // 没 key = 角色卡完全不生效，评论退回模板。这必须让人一眼看到，
         // 否则用户会以为写的人设起作用了。
         st.llm === false
