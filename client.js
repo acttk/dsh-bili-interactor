@@ -31,7 +31,14 @@ window.__ModuleLoader__.load({
       if (isNaN(d.getTime())) return '—'
       return pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes())
     }
-    const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku: '弹幕', follow: '关注', comment: '评论', reply: '回评论', replyback: '回我', dm: '私信' }
+    // B站 支持在视频地址后加 #reply<rpid>，页面加载完会自动滚到那条评论并高亮。
+// 参考 Bilibili-Evolved #690 的说明。没有 rpid 就退回视频页。
+const cmtUrl = (bvid, rpid) => {
+  const base = 'https://www.bilibili.com/video/' + (bvid || '') + '/'
+  return rpid ? base + '#reply' + String(rpid) : base
+}
+
+const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku: '弹幕', follow: '关注', comment: '评论', reply: '回评论', replyback: '回我', dm: '私信' }
     const KIND_COLOR = { like: '#f472b6', coin: '#fbbf24', favorite: '#38bdf8', danmaku: '#a78bfa', follow: '#34d399', comment: '#fb923c', reply: '#22d3ee', replyback: '#4ade80', dm: '#f87171' }
     const TAGC = {
       '阶段': '#60a5fa', '思考': '#c084fc', '候选': '#94a3b8',
@@ -481,9 +488,20 @@ window.__ModuleLoader__.load({
             KIND_LABEL[r.kind] || r.kind),
           r.ok === false ? h('span', { 'data-bi-chip': '', style: { color: '#f87171' } }, '没发出去') : null,
           h('a', {
-            'data-bi-bv': '', href: 'https://www.bilibili.com/video/' + (r.bvid || ''),
-            target: '_blank', rel: 'noreferrer',
+            'data-bi-bv': '', href: 'https://www.bilibili.com/video/' + (r.bvid || '') + '/',
+            target: '_blank', rel: 'noreferrer', title: '打开视频页',
           }, r.bvid || ''),
+          (() => {
+            const jump = r.rpid || r.root
+            return jump
+              ? h('a', {
+                  'data-bi-bv': '', href: cmtUrl(r.bvid, jump),
+                  target: '_blank', rel: 'noreferrer',
+                  title: '直接滚到这条评论（B站 会高亮它）',
+                  style: { color: '#22d3ee' },
+                }, r.rpid ? '跳到这条评论' : '跳到这一楼')
+              : null
+          })(),
           h('span', { 'data-bi-note': '', style: { flex: '1 1 auto' } },
             (r.toName ? '→ ' + r.toName + ' · ' : '') + localTime(r.ts))),
         h('div', { style: { fontSize: 13.5, lineHeight: 1.8, whiteSpace: 'pre-wrap', wordBreak: 'break-word' } },
@@ -533,11 +551,16 @@ window.__ModuleLoader__.load({
             }, '删掉')),
           h('div', { style: { fontSize: 13.5, lineHeight: 1.8, wordBreak: 'break-word' } }, e.text),
           e.why ? h('div', { 'data-bi-note': '', style: { marginTop: 4, color: '#a78bfa' } }, '好在哪：' + e.why) : null,
-          e.bvid ? h('div', { 'data-bi-note': '', style: { marginTop: 4, opacity: .7 } },
+          e.bvid ? h('div', { 'data-bi-note': '', style: { marginTop: 4, opacity: .8, display: 'flex', gap: 10 } },
             h('a', {
-              'data-bi-bv': '', href: 'https://www.bilibili.com/video/' + e.bvid,
+              'data-bi-bv': '', href: 'https://www.bilibili.com/video/' + e.bvid + '/',
               target: '_blank', rel: 'noreferrer',
-            }, e.bvid)) : null)
+            }, e.bvid),
+            e.rpid ? h('a', {
+              'data-bi-bv': '', href: cmtUrl(e.bvid, e.rpid),
+              target: '_blank', rel: 'noreferrer', style: { color: '#22d3ee' },
+              title: '直接滚到那条评论',
+            }, '跳到来源评论') : null) : null)
       }
 
       const memory = h('div', null,
@@ -562,7 +585,14 @@ window.__ModuleLoader__.load({
           videos.length === 0
             ? h('div', { 'data-bi-empty': '' }, '今天还没碰过任何视频')
             : videos.map((v) => h('div', { 'data-bi-item': '', key: v.bvid },
-                h('a', { 'data-bi-bv': '', href: v.url, target: '_blank', rel: 'noreferrer' }, v.bvid),
+                h('a', { 'data-bi-bv': '', href: v.url + '/', target: '_blank', rel: 'noreferrer' }, v.bvid),
+                v.lastRpid
+                  ? h('a', {
+                      'data-bi-bv': '', href: cmtUrl(v.bvid, v.lastRpid),
+                      target: '_blank', rel: 'noreferrer', style: { color: '#22d3ee', marginLeft: 8 },
+                      title: '直接滚到我在这条视频下的最后一条评论',
+                    }, '跳到评论')
+                  : null,
                 h('div', { 'data-bi-vt': '' },
                   h('div', null, v.title || '(无标题)'),
                   h('div', { 'data-bi-vup': '' }, v.up || '')),

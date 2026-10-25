@@ -10,6 +10,8 @@ const ROOT = 'C:\\Users\\user\\Desktop\\DSH\\dsh-bili-interactor'
 const HOME = join(process.env.TEMP, 'bi-integ')
 process.env.BILI_INTERACTOR_HOME = HOME
 process.env.DSH_HOME = join(process.env.TEMP, 'bi-integ-dsh')
+// 共享凭证（「刷B站」用的那份）也指到临时目录，别覆盖真实的
+process.env.BILI_INTERACTOR_SHARED_DIR = join(process.env.TEMP, 'bi-integ-shared')
 try { rmSync(HOME, { recursive: true, force: true }) } catch {}
 mkdirSync(HOME, { recursive: true })
 
@@ -107,6 +109,19 @@ if (existsSync(realCred)) {
   check('真实目录没有桩凭证', !String(c.sessdata || '').startsWith('STUB'), c.sessdata)
 } else {
   check('真实目录没有桩凭证', true)
+}
+
+// 真实共享凭证（刷B站 读的那份）不能被测试写成桩数据
+try {
+  const sharedReal = join(process.env.USERPROFILE + '', '.dsh', 'bili-duty', 'bili_credential.json')
+  if (existsSync(sharedReal)) {
+    const c = JSON.parse(readFileSync(sharedReal, 'utf8'))
+    check('真实共享凭证没被测试污染', !String(c.sessdata || '').startsWith('STUB'), c.sessdata)
+  } else {
+    check('真实共享凭证没被测试污染', true)
+  }
+} catch {
+  check('真实共享凭证没被测试污染', true)
 }
 
 console.log('\nPASS ' + ok + ' / FAIL ' + bad)

@@ -184,6 +184,24 @@ if (t2.some((x) => x.includes('扫码登录'))) throw new Error('已登录却还
   }
   console.log('OK  「它说了什么」能看到正文（' + talkText.length + ' 个节点）')
 
+  // 跳转必须能直达评论：href 里要有 #reply<rpid>，不能只到视频页
+  const hrefs = []
+  const grabHref = (n) => {
+    if (n == null) return
+    if (Array.isArray(n)) return n.forEach(grabHref)
+    if (typeof n !== 'object') return
+    if (typeof n.tag === 'function') { try { grabHref(n.tag(n.props || {})) } catch { /* ignore */ } ; return }
+    if (n.props && typeof n.props.href === 'string') hrefs.push(n.props.href)
+    if (n.children) n.children.forEach(grabHref)
+  }
+  grabHref(render())
+  const jump = hrefs.filter((h) => /#reply\d+/.test(h))
+  if (!jump.length) throw new Error('「它说了什么」里没有 #reply<rpid> 的直达链接，只有视频页')
+  if (!jump.every((h) => h.startsWith('https://www.bilibili.com/video/BV'))) {
+    throw new Error('直达链接格式不对：' + jump[0])
+  }
+  console.log('OK  能直接跳到对应评论（' + jump.length + ' 个 #reply 链接，例：' + jump[0] + '）')
+
   // 「记忆」页签
   tabs = findTabs(render())
   const memTab = tabs.find((t) => String((t.children && t.children[0]) || '') === '记忆')
