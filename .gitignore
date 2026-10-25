@@ -1,4 +1,4 @@
-﻿node_modules/
+node_modules/
 *.log
 .DS_Store
 .env
@@ -15,3 +15,8 @@ bili_credential.json
 __pycache__/
 *.pyc
 
+# 临时脚本 / 截图（别进仓库）
+tests/_p*.py
+tests/_dbg_*
+tests/verify_*
+topbar*.png
