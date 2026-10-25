@@ -126,6 +126,7 @@ console.log('OK  未登录：登录卡正常（' + t1.length + ' 个文本节点
 
 /* ——— 已登录：显示退出，不再要求扫码 ——— */
 state.loggedIn = true
+state.ownLogin = true          // 自己登录的，才该有「退出登录」
 store.clear(); slot = 0
 ViewFn()
 await new Promise((res) => setTimeout(res, 40))
@@ -216,6 +217,20 @@ if (t2.some((x) => x.includes('扫码登录'))) throw new Error('已登录却还
   tabs[0].props.onClick()
   render()
 }
+
+/* ——— 借用「刷B站」的登录：不该给一个点不动的「退出登录」 ——— */
+state.loggedIn = true
+state.ownLogin = false
+store.clear(); slot = 0
+ViewFn()
+await new Promise((res) => setTimeout(res, 40))
+slot = 0
+const tBorrow = collect(ViewFn())
+if (!tBorrow.some((x) => x.includes('借用'))) throw new Error('借用登录时没说明是借用的')
+if (!tBorrow.some((x) => x.includes('用本插件单独登录'))) throw new Error('借用登录时没给「单独登录」入口')
+if (tBorrow.some((x) => x.includes('退出登录'))) throw new Error('借用登录时还给了「退出登录」——点了没用')
+console.log('OK  借用登录：给的是「用本插件单独登录」，不是点不动的退出')
+state.ownLogin = true
 
 console.log('OK  已登录：显示退出登录、不再显示扫码')
 

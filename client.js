@@ -348,11 +348,20 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
                 h('div', { 'data-bi-lab': '', style: { fontSize: 13.5 } },
                   (st.loginName || login.name || '已登录') +
                   (st.ownLogin ? '' : '（借用「刷B站」的登录）')),
-                h('div', { 'data-bi-note': '', style: { color: '#34d399' } },
-                  login.state === 'done' ? '✓ 刚登录成功，现在可以开跑了' : '凭证在本机，随时可以退出')),
-              h('button', {
-                'data-bi-btn': '', 'data-variant': 'ghost', disabled: busy === 'logout', onClick: doLogout,
-              }, busy === 'logout' ? '退出中…' : '退出登录'))
+                h('div', { 'data-bi-note': '', style: { color: st.ownLogin ? '#34d399' : '#fbbf24' } },
+                  st.ownLogin
+                    ? (login.state === 'done' ? '✓ 刚登录成功，现在可以开跑了' : '凭证在本机，随时可以退出')
+                    : '本插件没单独登录过，用的是「刷B站」那份。要断开就去那边退出')),
+              // 借用状态下「退出登录」点了也没用（自己那份本来就没有），
+              // 所以那种情况给的是「单独登录一个」。
+              st.ownLogin
+                ? h('button', {
+                    'data-bi-btn': '', 'data-variant': 'ghost', disabled: busy === 'logout', onClick: doLogout,
+                  }, busy === 'logout' ? '退出中…' : '退出登录')
+                : h('button', {
+                    'data-bi-btn': '', 'data-variant': 'primary', disabled: busy === 'login',
+                    onClick: () => startLogin(false),
+                  }, busy === 'login' ? '生成中…' : '用本插件单独登录'))
           : null,
 
         !loggedIn && login.img
@@ -404,6 +413,16 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
 
       /* ── 总览 ── */
       const overview = h('div', null,
+        // 没 key = 角色卡完全不生效，评论退回模板。这必须让人一眼看到，
+        // 否则用户会以为写的人设起作用了。
+        st.llm === false
+          ? h('div', { 'data-bi-card': '', style: { borderColor: 'rgba(251,191,36,.55)' } },
+              h('div', { 'data-bi-h2': '', style: { color: '#fbbf24' } }, '⚠️ 没有 DeepSeek key，人设不会生效'),
+              h('div', { 'data-bi-note': '', style: { lineHeight: 1.75 } },
+                '评论、回复、学习都会退回**内置模板和粗筛**：你写的角色卡、语气、' +
+                '「什么才值得记」都不会被用上。' +
+                '配一个 DeepSeek key（放到 ~/.dsh/.credentials.yaml）之后这些才会真的生效。'))
+          : null,
         loginCard,
         h('div', { 'data-bi-card': '' },
           h('div', { 'data-bi-h2': '' }, '今天'),
@@ -716,6 +735,14 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
             })),
           h('div', { 'data-bi-row': '' },
             h('div', null,
+              h('div', { 'data-bi-lab': '' }, '对方回复太短就不理'),
+              h('div', { 'data-bi-note': '' }, '字数少于这个就不回（挡「顶」「1」「？」这种）')),
+            h('input', {
+              'data-bi-input': '', type: 'number', min: 0, max: 50, defaultValue: String(cfg.replyBackMinLen ?? 2),
+              onBlur: (e) => patch({ replyBackMinLen: Math.max(0, Number(e.target.value) || 0) }, '最短回复'),
+            })),
+          h('div', { 'data-bi-row': '' },
+            h('div', null,
               h('div', { 'data-bi-lab': '' }, '每天最多回几条'),
               h('div', { 'data-bi-note': '' }, '默认 0 = 不限。只有你自己想设才填')),
             h('input', {
@@ -961,16 +988,16 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
           h('div', { 'data-bi-h2': '' }, '额度和节奏（都是上限，想调多大都行）'),
           h('div', { 'data-bi-row': '' },
             h('div', null,
-              h('div', { 'data-bi-lab': '' }, '一轮最多动几条'),
-              h('div', { 'data-bi-note': '' }, '上限，不是任务量；挑不满就少动几条')),
+              h('div', { 'data-bi-lab': '' }, '一轮最多动几次'),
+              h('div', { 'data-bi-note': '' }, '点赞、投币、弹幕、评论、回复**全算在内**。到数就停，不会硬凑')),
             h('input', {
-              'data-bi-input': '', type: 'number', min: 1, max: 500, defaultValue: cfg.maxActionsPerRun,
-              onBlur: (e) => patch({ maxActionsPerRun: Math.max(1, Math.min(500, Number(e.target.value) || 20)) }, '每轮上限'),
+              'data-bi-input': '', type: 'number', min: 0, max: 2000, defaultValue: cfg.maxActionsPerRun,
+              onBlur: (e) => patch({ maxActionsPerRun: Math.max(0, Math.min(2000, Number(e.target.value) || 0)) }, '每轮上限'),
             })),
           h('div', { 'data-bi-row': '' },
             h('div', null,
               h('div', { 'data-bi-lab': '' }, '一天最多动几次'),
-              h('div', { 'data-bi-note': '' }, '到点自动停。填 0 = 不限（只用「一轮上限」兜着）')),
+              h('div', { 'data-bi-note': '' }, '管「跑一轮」的动作；监听回复另算（有自己的每日上限）。填 0 = 不限')),
             h('input', {
               'data-bi-input': '', type: 'number', min: 0, max: 100000, defaultValue: cfg.maxActionsPerDay,
               onBlur: (e) => patch({ maxActionsPerDay: Math.max(0, Number(e.target.value) || 0) }, '每日上限'),
