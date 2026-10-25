@@ -1,4 +1,4 @@
-﻿/**
+/**
  * dsh-bili-interactor —— 浏览器半端（设置里的「B站互动」页）
  * ============================================================================
  * 这一页把四件事摊开：
@@ -492,14 +492,20 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
             target: '_blank', rel: 'noreferrer', title: '打开视频页',
           }, r.bvid || ''),
           (() => {
-            const jump = r.rpid || r.root
+            // ⚠️ B站 的 #reply 锚点只在顶层评论里找。子评论（楼中楼）的 rpid
+            //    不在首屏列表里，跳不过去 —— 这就是「有的生效有的没反应」。
+            //    有 root 就跳 root（B站 会把这一串楼展开，我的回复就在里面）。
+            const jump = r.root || r.rpid
+            const isThread = !!(r.root && String(r.root) !== String(r.rpid))
             return jump
               ? h('a', {
                   'data-bi-bv': '', href: cmtUrl(r.bvid, jump),
                   target: '_blank', rel: 'noreferrer',
-                  title: '直接滚到这条评论（B站 会高亮它）',
+                  title: isThread
+                    ? '跳到这一楼（B站 会展开整串，你的回复在里面）'
+                    : '直接滚到这条评论（B站 会高亮它）',
                   style: { color: '#22d3ee' },
-                }, r.rpid ? '跳到这条评论' : '跳到这一楼')
+                }, isThread ? '跳到这一楼' : '跳到这条评论')
               : null
           })(),
           h('span', { 'data-bi-note': '', style: { flex: '1 1 auto' } },
@@ -556,11 +562,11 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
               'data-bi-bv': '', href: 'https://www.bilibili.com/video/' + e.bvid + '/',
               target: '_blank', rel: 'noreferrer',
             }, e.bvid),
-            e.rpid ? h('a', {
-              'data-bi-bv': '', href: cmtUrl(e.bvid, e.rpid),
+            (e.root || e.rpid) ? h('a', {
+              'data-bi-bv': '', href: cmtUrl(e.bvid, e.root || e.rpid),
               target: '_blank', rel: 'noreferrer', style: { color: '#22d3ee' },
-              title: '直接滚到那条评论',
-            }, '跳到来源评论') : null) : null)
+              title: '直接滚到那条评论（楼中楼跳的是整个楼）',
+            }, (e.root && String(e.root) !== String(e.rpid)) ? '跳到来源楼' : '跳到来源评论') : null) : null)
       }
 
       const memory = h('div', null,
@@ -806,7 +812,57 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
             h('input', {
               'data-bi-input': '', type: 'number', min: 0, max: 30, defaultValue: String(cfg.learnUseCount ?? 8),
               onBlur: (e) => patch({ learnUseCount: Math.max(0, Number(e.target.value) || 0) }, '参考条数'),
-            }))),
+            })),
+          h('div', { 'data-bi-row': '' },
+            h('div', null,
+              h('div', { 'data-bi-lab': '' }, '多少分以上才记'),
+              h('div', { 'data-bi-note': '' }, '0~10。调高 = 只记真正好的，宁缺毋滥')),
+            h('input', {
+              'data-bi-input': '', type: 'number', min: 0, max: 10, defaultValue: String(cfg.learnMinScore ?? 6),
+              onBlur: (e) => patch({ learnMinScore: Math.max(0, Math.min(10, Number(e.target.value) || 0)) }, '门槛'),
+            })),
+
+          // ★ 这一条最重要：什么才算值得记，由你定
+          h('div', { style: { marginTop: 14 } },
+            h('div', { 'data-bi-lab': '', style: { marginBottom: 4 } }, '什么样的才值得记（你自己定标准）'),
+            h('div', { 'data-bi-note': '', style: { marginBottom: 8, lineHeight: 1.7 } },
+              '这段话会原样交给模型，当成挑选标准。写得越具体，它越不会记没用的东西。' +
+              '留空就用默认的「有信息量或有观点，不记纯情绪/复读/广告」。'),
+            h('textarea', {
+              'data-bi-input': '', style: {
+                width: '100%', minHeight: 92, resize: 'vertical', fontFamily: 'inherit',
+                fontSize: 12.5, lineHeight: 1.7, padding: '8px 10px', boxSizing: 'border-box',
+              },
+              defaultValue: String(cfg.learnPrompt || ''),
+              onBlur: (e) => patch({ learnPrompt: e.target.value }, '学习标准'),
+            })),
+
+          // 手动加一条
+          h('div', { style: { marginTop: 14 } },
+            h('div', { 'data-bi-lab': '', style: { marginBottom: 4 } }, '手动加一条'),
+            h('div', { 'data-bi-note': '', style: { marginBottom: 8 } }, '你自己觉得该记的，直接写进去'),
+            h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
+              h('input', {
+                'data-bi-input': '', id: 'bi-memo-new', type: 'text',
+                placeholder: '比如：这条视频里那句「……」说得挺准',
+                style: { flex: '1 1 260px', minWidth: 200 },
+              }),
+              h('button', {
+                'data-bi-btn': '', 'data-variant': 'primary',
+                onClick: async () => {
+                  const el = document.getElementById('bi-memo-new')
+                  const text = el && el.value ? String(el.value).trim() : ''
+                  if (!text) { setMsg('先写点内容'); return }
+                  try {
+                    const j = await post('/learned/add', { text, why: '手动添加', score: 8 })
+                    if (j && j.ok) {
+                      setMsg('已加进记忆')
+                      if (el) el.value = ''
+                      loadMemo()
+                    } else setMsg(j?.error || '加失败')
+                  } catch (e) { setMsg('加失败：' + e) }
+                },
+              }, '加进记忆')))),
 
         /* ── ★ 人设：整张角色卡都能贴进来，不截断 ── */
         h('div', { 'data-bi-card': '' },

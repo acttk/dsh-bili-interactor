@@ -1,240 +1,224 @@
 # dsh-bili-interactor
 
-一个 [DeepSeek Harness](https://github.com/deepseek-ai) 插件：**替你逛 B站，并且真的产生互动** ——
-点赞、投币、收藏、发弹幕、关注，带一块可视化面板，进度和判断过程全都摊开给你看。
+DSH 插件。让 AI 替你逛 B站 并**真的产生互动**：点赞、投币、收藏、发弹幕、评论、回评论，以及别人回你之后接着聊。
 
-> ⚠️ 它用的是**你自己的账号**。点赞会亮、投币会扣、弹幕会挂在视频上、关注会被人看见。
-> 额度与间隔就是护栏，默认值刻意保守。别拿去刷量。
+> ⚠️ 用的是你自己的账号。点赞会亮、投币会扣、评论会挂在视频下、关注会被人看见。额度和间隔是护栏，默认值刻意保守，别拿去刷量。
 
 ---
 
-## 第一次用：先扫码登录
+## 功能
 
-装完之后打开 **设置 → B站互动**，第一眼看到的就是登录卡：
-
-```
-┌─────────────────────────────────────────────┐
-│ 先登录 B站                                   │
-│ 点赞、投币、弹幕都记在账号上，所以得先知道你  │
-│ 用的是谁。点下面按钮出二维码，用 B站 手机 App │
-│ 扫一下、手机上点「确认登录」。凭证只存在这台  │
-│ 电脑的 ~/.dsh/bili-interactor/ 里，不上传。   │
-│                                             │
-│ [ 扫码登录 ]                                 │
-└─────────────────────────────────────────────┘
-```
-
-点了之后：
-
-1. 页面里直接出现二维码（不用切窗口、不用手机助手）
-2. 手机 B站 App → 右上角扫一扫 → 扫它
-3. 手机上点「确认登录」
-4. 面板每 2 秒自己查一次，成功后变成「已登录 + 退出登录」
-
-**没有独立网页、没有端口、没有地址要记。** 二维码直接在设置页里显示。
-
-登录态存在 `~/.dsh/bili-interactor/credential.json`。
-如果之前装过 `dsh-bili-scroll`（刷视频那个），它会把 `~/.dsh/bili-duty/bili_credential.json` 当备用凭证直接用 —— **不用重登**。
-
-### 扫码登录是怎么实现的
-
-不用 `bilibili_api.QrCodeLogin`：它把 `qrcode_key` 藏在私有属性里，
-一个进程生成的码另一个进程查不了状态；而「重新生成」还会换一张新码，让手机上扫的那张作废。
-
-自己按同一套接口走：
-
-```
-GET passport.bilibili.com/x/passport-login/web/qrcode/generate   → url + qrcode_key
-GET passport.bilibili.com/x/passport-login/web/qrcode/poll?qrcode_key=…
-      code: 86101 未扫 / 86090 已扫待确认 / 86038 过期 / 0 成功
-成功时 cookie 在返回的 url 查询串里：SESSDATA / bili_jct / DedeUserID / refresh_token
-```
-
-宿主把 `qrcode_key` 存在内存里，poll 时带回去 —— **始终是同一张码**。
-
----
-
-## 它跟「刷B站」有什么不一样
-
-| | dsh-bili-scroll（刷视频） | **dsh-bili-interactor（本插件）** |
-|---|---|---|
-| 核心动作 | 搜索 → 读字幕 → 挑值得看的 | 搜索 → 粗筛 → **真的点下去** |
-| 产出 | 一份日报，告诉你今天看什么 | 一串动作，你的账号里真的多了几个赞 |
-| 判断 | 模型读内容，写理由 | 关键词 + 播放量 + 限流策略 |
-| 风险 | 基本没有（只读） | 有（写操作，动的是你的账号） |
-
-两个插件**共用同一套登录**（`~/.dsh/bili-duty/bili_credential.json`），
-所以刷视频那个插件扫码登录过一次，这边就不用再登。
-
----
-
-## 面板长什么样
-
-设置 → 左侧「**B站互动**」，四个标签页：
-
-- **总览** —— 今天动了几次 / 还剩多少额度 / 投了几个币 / 碰过几条视频，
-  外加**这一轮的过程实录**（它在搜什么、挑了哪条、为什么跳过）和最近动作流水
-- **互动** —— 今天碰过的每条视频，点了什么（点赞/投币/弹幕各自一个彩色标签）
-- **过程** —— 完整的过程实录，不做截断
-- **设置** —— 开关、额度、关键词、弹幕风格，改完即时生效
-
-过程实录是**中文**的，写在 `live.md` 里，每秒刷新一次。
-
----
-
-## 原理（三层）
-
-```
-┌─────────────────────────────────────────────┐
-│ 宿主半边 lib/index.js                        │
-│  · 搜关键词 → 粗筛 → 挑目标（lib/targets.js）│
-│  · 生成弹幕文案（lib/danmaku.js，有 key 用 LLM）│
-│  · 记账（ledger.jsonl）、算额度（daily.json）│
-│  · 挂 /api/bili-interactor/* 给面板用        │
-└──────────────────┬──────────────────────────┘
-                   │ spawn + JSON（只传数据，不传文件）
-┌──────────────────▼──────────────────────────┐
-│ 执行器 py/interact.py                        │
-│  · login / login-poll / whoami / search      │
-│  · info / act / run / comment                │
-│  · 用 bilibili_api 和 passport 真调 B站 接口 │
-│  · 只干活不判断，失败返回 {"ok":false} 不抛栈 │
-└──────────────────┬──────────────────────────┘
-                   │ HTTPS + cookie
-┌──────────────────▼──────────────────────────┐
-│ 你的 B站 账号                                │
-└─────────────────────────────────────────────┘
-```
-
-**为什么拆成 Node + Python 两层**：
-判断要模型、要策略、要能改，那是 Node 的活；
-动作要确定性、要重试、要一个明确的 error code，那是 Python + `bilibili_api` 的活。
-中间用 JSON 对话，两边都能单独跑、单独测。
-
-**为什么写盘全在 Node 那边**：
-DSH 会在沙箱里跑子进程，`~/.dsh/<插件名>` 这类目录子进程往往写不进去。
-所以 python 只负责联网取数据，`credential.json` / `qr.png` / 账本一律由宿主写 ——
-这条边界被 `tests/test_login.py` 钉死了（它监视每一次写盘尝试，有就失败）。
+- **刷视频**：按关键词搜，粗筛掉广告/抽奖类，同一个 UP 限条数
+- **互动**：点赞 / 投币 / 收藏 / 发弹幕 / 关注，每步独立成败
+- **评论**：发顶层评论，可按 UID 反查昵称 `@` 你
+- **回评论**：只回「值得接话」的（模型先挑，纯复读/纯情绪不选，挑不出来就不回）
+- **回复监听**：后台定时翻自己发过的楼，别人回我就接着回，条数可设上限或不限
+- **学习记忆**：从评论区和自己收到的回复里挑有内容的存下来，下次说话带上
+- **面板**：设置 → B站互动，六个页签（总览 / 它说了什么 / 碰过的视频 / 记忆 / 过程 / 设置）
 
 ---
 
 ## 安装
 
 ```bash
-# 1. 依赖（复用「刷B站」插件的 venv）
+# 1. Python 依赖
 ~/.dsh/bili-duty/.venv/Scripts/pip install bilibili-api-python httpx qrcode pillow
 
-# 2. 装插件
+# 2. 装进 profile
 cd ~/.dsh/profiles/desktop
 pnpm add link:<本仓库路径>
 
-# 3. 让 profile 认识它（cordis.patch.yml 末尾）
+# 3. 让 profile 认识它（cordis.patch.yml 末尾追加）
 #    - insert:
 #        - id: bili-interactor
 #          name: dsh-bili-interactor
 ```
 
-然后**重启 DSH**（客户端 bundle 是启动时建图的，光刷新页面不够）。
-重启后打开设置，登录卡会直接让你扫码。
+装完重启 DSH 一次（首次建 bundle 用），之后改代码只需刷新页面。
 
 ---
 
-## 命令行（不装插件也能用）
+## 第一次用
 
-`py/interact.py` 是独立的，直接跑：
+1. 打开 **设置 → B站互动**
+2. 点 **扫码登录**，页面里直接出二维码
+3. 手机 B站 App → 右上角扫一扫 → 点「确认登录」
+4. 面板显示「已登录 + 退出登录」就成了
 
-```bash
-PY=~/.dsh/bili-duty/.venv/Scripts/python
+二维码有效期 180 秒，前台会显示倒计时；没扫完离开页面不影响，宿主在后台继续轮询。
 
-$PY py/interact.py login                          # 出二维码 base64
-$PY py/interact.py login-poll --key <qrcode_key>   # 查扫码状态
-$PY py/interact.py logout
-$PY py/interact.py whoami
-$PY py/interact.py search --keyword 恐怖游戏 --order click --limit 10
-$PY py/interact.py info   --bvid BV1xxxxxxx
-$PY py/interact.py act    --bvid BV1xxxxxxx --like --coin 1 --danmaku "这波可以"
-$PY py/interact.py run    --plan plan.json
-$PY py/interact.py comment --bvid BV1xxxxxxx --text "……"
-```
+登录成功会写两份凭证：
 
-> 命令行下 `login` 只吐 base64，看图自己解码：
-> `... | jq -r .image | sed 's/^data:image\/png;base64,//' | base64 -d > qr.png`
-
-全部输出 JSON：
-
-```json
-{"ok": true, "bvid": "BV1xxx", "done": [{"kind":"like","ok":true}], "failed": []}
-```
+- `~/.dsh/bili-interactor/credential.json`（本插件自己用）
+- `~/.dsh/bili-duty/bili_credential.json`（给 `dsh-bili-scroll` 共用，只写不删）
 
 ---
 
-## 配置（`~/.dsh/bili-interactor/config.json`）
+## 面板
+
+| 页签 | 内容 |
+|---|---|
+| 总览 | 今天动了几次 / 剩余额度 / 投币数 / 上一轮结果，可手动「现在跑一轮」 |
+| 它说了什么 | 评论、回评论、回我、私信的全部原文，带「跳到这条评论」链接 |
+| 碰过的视频 | 今天碰过的视频和动作标签，带「跳到评论」 |
+| 记忆 | 学到的每条内容、分数、好在哪、来源；可单条删除、可手动添加 |
+| 过程 | 这一轮在搜什么、挑了哪条、为什么跳过 |
+| 设置 | 全部开关和限额 |
+
+跳转用的是 B站 的 `#reply<rpid>` 锚点，会滚到对应评论并高亮。楼中楼跳的是楼层根评论（B站 只认顶层评论锚点）。
+
+---
+
+## 配置
+
+配置存在 `~/.dsh/bili-interactor/config.json`，也可以直接在面板「设置」里改。
+
+**额度**
 
 | 键 | 默认 | 说明 |
 |---|---|---|
 | `enabled` | `true` | 总开关 |
-| `maxActionsPerRun` | `20` | 一轮最多动几次（**上限，不是任务量**） |
-| `maxActionsPerDay` | `120` | 一天最多动几次 |
-| `doLike` | `true` | 点赞 |
-| `doCoin` | `true` | 投币 |
-| `coinPerVideo` | `1` | 每条投几个（1 或 2） |
-| `doFavorite` | `false` | 收藏（需要 `favoriteId`） |
-| `doDanmaku` | `true` | 发弹幕 |
-| `doFollow` | `false` | 关注 UP（**最容易被人发现，默认关**） |
+| `maxActionsPerRun` | `20` | 一轮最多动几次 |
+| `maxActionsPerDay` | `120` | 一天上限，`0` = 不限 |
+
+**动作**
+
+| 键 | 默认 | 说明 |
+|---|---|---|
+| `doLike` / `doCoin` / `doFavorite` / `doDanmaku` / `doFollow` | 见默认配置 | 各类动作开关 |
+| `coinPerVideo` | `1` | 每条投几个币（1 或 2） |
+| `favoriteId` | `0` | 收藏夹 ID，`0` = 不收 |
+| `actionIntervalMs` | `[1500, 4000]` | 两次动作之间随机等待 |
+
+**选视频**
+
+| 键 | 默认 | 说明 |
+|---|---|---|
 | `keywords` | `["恐怖游戏","游戏解说"]` | 搜什么 |
 | `order` | `click` | `click` 按播放 / `pubdate` 按最新 / `totalrank` 综合 |
 | `daysBack` | `7` | 太老的不碰，`0` = 不限 |
 | `minPlay` | `1000` | 播放量下限 |
 | `maxPerUpPerRun` | `2` | 同一个 UP 一轮最多碰几条 |
-| `actionIntervalMs` | `[1500,4000]` | 两次动作之间随机等多久 |
-| `danmakuStyle` | … | 弹幕风格提示词 |
-| `persona` | … | 人设，喂给写弹幕的模型 |
+| `skipKeywords` | 广告/抽奖/… | 标题命中就不碰 |
+
+**评论**
+
+| 键 | 默认 | 说明 |
+|---|---|---|
+| `doComment` | `true` | 发顶层评论 |
+| `doReplyComment` | `true` | 回别人的评论 |
+| `replyCount` | `2` | 每条视频最多回几条（0 = 不回，只发顶层） |
+| `mentionUid` | `0` | `@` 谁，填 UID，`0` = 不 `@` |
+| `persona` / `commentPersona` | — | 人设，写多长都行，不截断 |
+
+**回复监听**
+
+| 键 | 默认 | 说明 |
+|---|---|---|
+| `doReplyBack` | `true` | 别人回我就回他 |
+| `replyBackMax` | `0` | 每条评论下最多回几句，`0` = 不限 |
+| `listenIntervalMin` | `1` | 每几分钟查一次 |
+| `listenMaxThreadsPerTick` | `15` | 每轮最多查几个楼（楼多时轮流） |
+| `listenLookbackHours` | `72` | 只往回看多少小时内自己发的评论 |
+| `replyBackMinLen` | `2` | 对方回复太短就不理 |
+
+**学习**
+
+| 键 | 默认 | 说明 |
+|---|---|---|
+| `doLearn` | `true` | 开关 |
+| `learnPerRun` | `3` | 一轮最多记几条 |
+| `learnUseCount` | `8` | 说话时参考几条 |
+| `learnMinScore` | `6` | 低于这个分不记（0~10） |
+| `learnPrompt` | 见默认配置 | **你自己定的挑选标准**，会原样塞进模型提示词 |
 
 ---
 
-## 账本
+## 数据文件
 
 ```
 ~/.dsh/bili-interactor/
-├── credential.json  登录凭证（含 SESSDATA，别外传）
-├── qr.png           当前二维码（登录成功后自动删）
-├── config.json      配置
-├── ledger.jsonl     一行一个动作，append-only（好查、好删、好对账）
-├── daily.json       当日计数（额度靠它）
-├── live.md          过程实录（面板直接读这个）
-└── interact.log     运行日志
+├── credential.json   登录凭证（含 SESSDATA，别外传）
+├── config.json       配置
+├── ledger.jsonl      一行一个动作，append-only
+├── learned.jsonl     记忆，一行一条，带分数/理由/来源
+├── replied.json      已经回过的子评论 rpid（防重复回）
+├── daily.json        当日计数（额度靠它）
+├── live.md           过程实录（面板直接读这个）
+├── interact.log      运行日志
+└── login.json        未扫完的二维码快照（key + 图，成功后删）
 ```
 
-`ledger.jsonl` 里每一行长这样：
+`ledger.jsonl` 每行：
 
 ```json
-{"ts":"2026-10-25T01:00:00.000Z","kind":"like","ok":true,"bvid":"BV1xxx","title":"…","up":"…"}
+{"ts":"2026-10-25T01:00:00.000Z","kind":"comment","ok":true,"bvid":"BV1xxx","text":"…","rpid":"318129595649"}
 ```
 
-**先记账再发**：发失败的那条也会留下 `ok:false` 和错误码，所以对得上账。
+---
+
+## 命令行
+
+`py/interact.py` 可以单独跑，全部输出 JSON：
+
+```bash
+PY=~/.dsh/bili-duty/.venv/Scripts/python
+
+$PY py/interact.py whoami
+$PY py/interact.py search   --keyword 恐怖游戏 --order click --limit 10
+$PY py/interact.py info     --bvid BV1xxxxxxx
+$PY py/interact.py act      --bvid BV1xxxxxxx --like --coin 1 --danmaku "这波可以"
+$PY py/interact.py comment  --bvid BV1xxxxxxx --text "……"
+$PY py/interact.py comments --bvid BV1xxxxxxx --order time --limit 20
+$PY py/interact.py sub-replies --bvid BV1xxxxxxx --rpid 123456
+```
+
+> 扫码登录走宿主（`lib/login.mjs`），凭证在响应头里，python 侧不再参与登录。
+
+---
+
+## 结构
+
+```
+lib/index.js     宿主：路由、调度、监听器、记账
+lib/login.mjs    扫码登录（Node，从 Set-Cookie 取凭证）
+lib/targets.js   搜索、粗筛、挑目标
+lib/danmaku.js   文案生成（有 DeepSeek key 用模型，否则模板）
+lib/learn.js     记忆的读写与淘汰
+lib/state.js     配置、账本、日额度
+py/interact.py   执行层：只调 B站 接口，只干活不判断
+client.js        设置页面前端
+```
+
+写盘全部在 Node 侧，python 只负责联网 —— DSH 沙箱下子进程写不进 `~/.dsh/<插件名>`，这条边界由 `tests/test_login.py` 断言。
 
 ---
 
 ## 测试
 
 ```bash
-node smoke.mjs                # 客户端：骨架、登录卡（未登录/已登录两态）、四页签渲染
-node smoke-host.mjs           # 宿主：路由、state/config、未登录拦截、额度上限、总开关
-python tests/test_login.py    # 登录链路：状态机、cookie 解析、不写盘的架构边界
+node smoke.mjs                       # 客户端渲染、六个页签、跳转链接
+node smoke-host.mjs                  # 宿主路由、状态、各类拒绝路径
+node tests/test_login_flow.mjs       # 扫码→自动登录→凭证落盘→界面变已登录
+node tests/test_cookie_parse.mjs     # Set-Cookie 取凭证
+node tests/test_qr_ttl.mjs           # 二维码时间预算
+node tests/test_scan_then_expire.mjs # 扫了没确认就过期
+node tests/test_proactive_refresh.mjs
+node tests/test_reply_pick.mjs       # 「值得接话」的筛选
+node tests/test_learn_mention.mjs    # @ 去重、记忆读写
+python tests/test_comment_result.py  # 评论结果判定
+python tests/test_login.py           # python 侧零写盘
 ```
-
-`tests/test_login.py` 会监视每一次写盘尝试，断言 py 这半边**一次都没写** —— 这是架构约束，不是风格偏好。
 
 ---
 
 ## 已知限制
 
-- **弹幕不可撤回**。写歪了就只能去 B站 手动删，或者等它过期。
-- **没有真实观看时长**。它不会"看"视频，点完就走 —— 所以别指望它被认为是个活跃观众。
-- **风控存在**。短时间的密集写操作会被限流（返回 `-412` / `-352`），届时这一轮会记 failed 并停下。
-- **没有定时任务**。只有手动「现在跑一轮」。要不要加 cron 由你自己决定 ——
-  涉及写操作的自动化，我倾向于让你每次都亲手按一下。
-- **凭证是明文 cookie**。跟所有这类工具一样，`credential.json` 拿到就等于拿到你的登录态，别提交进仓库（`.gitignore` 已排除）。
+- **弹幕不可撤回**（B站 限制：2 分钟内、每天 5 条），写歪了只能手动删
+- **评论可能进审核**：新号评论公开列表里可能暂时看不到，但 `code: 0` 就是发出去了
+- **有风控**：短时间密集写操作会返回 `-412` / `-352`，命中后这一轮直接停
+- **不"看"视频**：只按标题/简介/播放量判断，没有真实观看时长
+- **凭证是明文 cookie**：拿到 `credential.json` 就等于拿到登录态，别提交进仓库
 
 ---
 

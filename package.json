@@ -1,50 +1,50 @@
 {
-  "name": "dsh-bili-interactor",
-  "version": "0.1.0",
-  "description": "DSH 插件：替你逛 B站 并产生真实互动 —— 点赞 / 投币 / 收藏 / 发弹幕 / 关注，带一块可视化面板",
-  "keywords": [
-    "dsh",
-    "dsh-plugin",
-    "deepseek-harness",
-    "bilibili",
-    "interaction",
-    "panel"
-  ],
-  "license": "MIT",
-  "type": "module",
-  "main": "lib/index.js",
-  "exports": {
-    ".": "./lib/index.js",
-    "./client": "./client.js",
-    "./cordis.patch.yml": "./cordis.patch.yml",
-    "./package.json": "./package.json"
-  },
-  "files": [
-    "lib",
-    "py",
-    "client.js",
-    "cordis.patch.yml",
-    "README.md",
-    "LICENSE"
-  ],
-  "engines": {
-    "dsh": ">=0.1.7-rc.1",
-    "node": ">=22"
-  },
-  "peerDependencies": {
-    "@deepseek-ai/cordis": ">=0.0.1-0"
-  },
-  "dsh": {
-    "bundle": {
-      "patch": "./cordis.patch.yml"
-    },
-    "client": {
-      "platform": "web",
-      "inject": [
-        "@deepseek-ai/dsh-client-runtime",
-        "@deepseek-ai/dsh-client-ui-settings",
-        "@deepseek-ai/dsh-client-ui-settings-plugins"
-      ]
-    }
-  }
+    "name":  "dsh-bili-interactor",
+    "version":  "0.2.0",
+    "description":  "DSH 插件：替你逛 B站 并产生真实互动 —— 点赞 / 投币 / 收藏 / 发弹幕 / 关注，带一块可视化面板",
+    "keywords":  [
+                     "dsh",
+                     "dsh-plugin",
+                     "deepseek-harness",
+                     "bilibili",
+                     "interaction",
+                     "panel"
+                 ],
+    "license":  "MIT",
+    "type":  "module",
+    "main":  "lib/index.js",
+    "exports":  {
+                    ".":  "./lib/index.js",
+                    "./client":  "./client.js",
+                    "./cordis.patch.yml":  "./cordis.patch.yml",
+                    "./package.json":  "./package.json"
+                },
+    "files":  [
+                  "lib",
+                  "py",
+                  "client.js",
+                  "cordis.patch.yml",
+                  "README.md",
+                  "LICENSE"
+              ],
+    "engines":  {
+                    "dsh":  "\u003e=0.1.7-rc.1",
+                    "node":  "\u003e=22"
+                },
+    "peerDependencies":  {
+                             "@deepseek-ai/cordis":  "\u003e=0.0.1-0"
+                         },
+    "dsh":  {
+                "bundle":  {
+                               "patch":  "./cordis.patch.yml"
+                           },
+                "client":  {
+                               "platform":  "web",
+                               "inject":  [
+                                              "@deepseek-ai/dsh-client-runtime",
+                                              "@deepseek-ai/dsh-client-ui-settings",
+                                              "@deepseek-ai/dsh-client-ui-settings-plugins"
+                                          ]
+                           }
+            }
 }

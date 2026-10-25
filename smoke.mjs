@@ -1,4 +1,4 @@
-﻿// 冒烟测试：不启动 DSH，只验证 client.js 的骨架对不对。
+// 冒烟测试：不启动 DSH，只验证 client.js 的骨架对不对。
 // 1) __ModuleLoader__.load 被调用，id 对
 // 2) factory 返回 { inject:['slots'], apply }
 // 3) apply 会注册 settings.section / bili-interactor
