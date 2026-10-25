@@ -31,8 +31,8 @@ window.__ModuleLoader__.load({
       if (isNaN(d.getTime())) return '—'
       return pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes())
     }
-    const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku: '弹幕', follow: '关注', comment: '评论', reply: '回评论', dm: '私信' }
-    const KIND_COLOR = { like: '#f472b6', coin: '#fbbf24', favorite: '#38bdf8', danmaku: '#a78bfa', follow: '#34d399', comment: '#fb923c', reply: '#22d3ee', dm: '#f87171' }
+    const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku: '弹幕', follow: '关注', comment: '评论', reply: '回评论', replyback: '回我', dm: '私信' }
+    const KIND_COLOR = { like: '#f472b6', coin: '#fbbf24', favorite: '#38bdf8', danmaku: '#a78bfa', follow: '#34d399', comment: '#fb923c', reply: '#22d3ee', replyback: '#4ade80', dm: '#f87171' }
     const TAGC = {
       '阶段': '#60a5fa', '思考': '#c084fc', '候选': '#94a3b8',
       '动作': '#4ade80', '跳过': '#64748b', '小结': '#22d3ee', '失败': '#f87171',
@@ -127,6 +127,7 @@ window.__ModuleLoader__.load({
 
     function Panel() {
       const [st, setSt] = React.useState(null)
+      const [memo, setMemo] = React.useState(null)
       const [err, setErr] = React.useState('')
       const [tab, setTab] = React.useState('overview')
       const [busy, setBusy] = React.useState('')
@@ -144,6 +145,19 @@ window.__ModuleLoader__.load({
           setErr(String((e && e.message) || e))
         }
       }, [])
+
+      // 记忆单独拉：只在打开「记忆」页签时拉一次，不跟着 2 秒轮询跑
+      const loadMemo = React.useCallback(async () => {
+        try {
+          const r = await fetch(API + '/learned', { credentials: 'same-origin' })
+          const j = await r.json()
+          if (j && j.ok) setMemo({ items: j.items || [], total: j.total || 0, used: j.used || [] })
+        } catch { /* 拉不到就保持上次的 */ }
+      }, [])
+
+      React.useEffect(() => {
+        if (tab === 'memory') loadMemo()
+      }, [tab, loadMemo])
 
       React.useEffect(() => {
         load()
@@ -450,6 +464,95 @@ window.__ModuleLoader__.load({
                 `${localTime(r.ts)}  ${r.ok === false ? '✗' : '✓'} ${KIND_LABEL[r.kind] || r.kind}  ${r.bvid || ''}  ${(r.title || '').slice(0, 26)}${r.text ? '  「' + r.text + '」' : ''}`
               ).join('\n'))),
       )
+
+      /* ── 它说了什么（评论 / 回复 / 回我 全文） ──
+       * 用户要能直接看到大肥鱼到底发了什么话，而不是只有一个"评论 ✓"。
+       */
+      const talkRows = (st.recent || [])
+        .filter((r) => ['comment', 'reply', 'replyback', 'dm'].includes(r.kind))
+        .slice(0, 60)
+
+      const talkItem = (r, i) => h('div', {
+        key: r.ts + i,
+        style: { padding: '10px 0', borderTop: i ? '1px solid var(--bi-line)' : 'none' },
+      },
+        h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 6 } },
+          h('span', { 'data-bi-chip': '', style: { color: KIND_COLOR[r.kind] || 'var(--bi-dim)' } },
+            KIND_LABEL[r.kind] || r.kind),
+          r.ok === false ? h('span', { 'data-bi-chip': '', style: { color: '#f87171' } }, '没发出去') : null,
+          h('a', {
+            'data-bi-bv': '', href: 'https://www.bilibili.com/video/' + (r.bvid || ''),
+            target: '_blank', rel: 'noreferrer',
+          }, r.bvid || ''),
+          h('span', { 'data-bi-note': '', style: { flex: '1 1 auto' } },
+            (r.toName ? '→ ' + r.toName + ' · ' : '') + localTime(r.ts))),
+        h('div', { style: { fontSize: 13.5, lineHeight: 1.8, whiteSpace: 'pre-wrap', wordBreak: 'break-word' } },
+          r.text || '(没有正文)'),
+        r.ok === false && r.error
+          ? h('div', { 'data-bi-note': '', style: { color: '#f87171', marginTop: 4 } }, '失败原因：' + r.error)
+          : null,
+        r.title ? h('div', { 'data-bi-note': '', style: { marginTop: 4, opacity: .75 } }, '《' + r.title + '》') : null)
+
+      const talk = h('div', null,
+        h('div', { 'data-bi-card': '' },
+          h('div', { 'data-bi-h2': '' }, '它说了什么（' + talkRows.length + ' 条）'),
+          h('div', { 'data-bi-note': '', style: { marginBottom: 10 } },
+            '评论、回别人、回我、私信 —— 全部原文都在这。点 BVID 能跳过去看。'),
+          talkRows.length === 0
+            ? h('div', { 'data-bi-empty': '' }, '还没说过话')
+            : talkRows.map(talkItem)))
+
+      /* ── 记忆（大肥鱼学到的） ──
+       * 不能只有一个数字，要能看到每条内容、好在哪、下次会不会用上。
+       */
+      const memoSrc = memo || { items: [], total: 0, used: [] }
+      const memoItem = (e, i) => {
+        const inUse = (memoSrc.used || []).includes(String(e.text))
+        const sc = Number(e.score) || 0
+        return h('div', {
+          key: (e.at || '') + i,
+          style: { padding: '11px 0', borderTop: i ? '1px solid var(--bi-line)' : 'none' },
+        },
+          h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 6 } },
+            h('span', {
+              'data-bi-chip': '',
+              style: { color: sc >= 8 ? '#4ade80' : sc >= 6 ? '#fbbf24' : 'var(--bi-dim)' },
+            }, '分 ' + sc),
+            inUse ? h('span', { 'data-bi-chip': '', style: { color: '#22d3ee' } }, '在用') : null,
+            e.from ? h('span', { 'data-bi-note': '' }, '来自 ' + e.from) : null,
+            h('span', { 'data-bi-note': '', style: { flex: '1 1 auto' } }, localTime(e.at)),
+            h('button', {
+              'data-bi-btn': '', 'data-variant': 'ghost',
+              style: { padding: '3px 9px', fontSize: 11.5 },
+              onClick: async () => {
+                try {
+                  const j = await post('/learned/delete', { text: e.text })
+                  if (j && j.ok) { setMsg('已删掉这条记忆'); loadMemo() } else setMsg('删失败')
+                } catch { setMsg('删失败') }
+              },
+            }, '删掉')),
+          h('div', { style: { fontSize: 13.5, lineHeight: 1.8, wordBreak: 'break-word' } }, e.text),
+          e.why ? h('div', { 'data-bi-note': '', style: { marginTop: 4, color: '#a78bfa' } }, '好在哪：' + e.why) : null,
+          e.bvid ? h('div', { 'data-bi-note': '', style: { marginTop: 4, opacity: .7 } },
+            h('a', {
+              'data-bi-bv': '', href: 'https://www.bilibili.com/video/' + e.bvid,
+              target: '_blank', rel: 'noreferrer',
+            }, e.bvid)) : null)
+      }
+
+      const memory = h('div', null,
+        h('div', { 'data-bi-card': '' },
+          h('div', { 'data-bi-h2': '' }, '它记住的东西（' + (memoSrc.items || []).length + ' / ' + (memoSrc.total || 0) + '）'),
+          h('div', { 'data-bi-note': '', style: { marginBottom: 10, lineHeight: 1.7 } },
+            '刷视频时从评论区挑出来的、以及别人跟它说的话里值得记的。' +
+            '标了「在用」的，是下次写评论/回别人时会真的带进提示词的。'),
+          h('div', { style: { marginBottom: 10 } },
+            h('button', {
+              'data-bi-btn': '', 'data-variant': 'ghost', onClick: () => loadMemo(),
+            }, '刷新')),
+          (memoSrc.items || []).length === 0
+            ? h('div', { 'data-bi-empty': '' }, '还没有记忆。跑一轮（要开着「边刷边学」）就会开始攒')
+            : (memoSrc.items || []).map(memoItem)))
 
       /* ── 互动（今天碰过的视频） ── */
       const videos = t.videos || []
@@ -814,12 +917,19 @@ window.__ModuleLoader__.load({
 
       const TABS = [
         ['overview', '总览'],
-        ['interact', '互动'],
+        ['talk', '它说了什么'],
+        ['interact', '碰过的视频'],
+        ['memory', '记忆'],
         ['process', '过程'],
         ['settings', '设置'],
       ]
 
-      const body = tab === 'overview' ? overview : tab === 'interact' ? interact : tab === 'process' ? process : settings
+      const body = tab === 'overview' ? overview
+        : tab === 'talk' ? talk
+        : tab === 'interact' ? interact
+        : tab === 'memory' ? memory
+        : tab === 'process' ? process
+        : settings
 
       return h('div', { 'data-bi-root': '' },
         h('div', { 'data-bi-head': '' },

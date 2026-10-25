@@ -133,6 +133,72 @@ slot = 0
 const t2 = collect(ViewFn())
 if (!t2.some((x) => x.includes('退出登录'))) throw new Error('已登录时看不到「退出登录」')
 if (t2.some((x) => x.includes('扫码登录'))) throw new Error('已登录却还让扫码')
+
+/* ——— 每个页签都要能渲染（新加的「它说了什么」「记忆」不能白屏） ——— */
+{
+  const render = () => { slot = 0; return ViewFn() }
+
+  const findTabs = (t) => {
+    const out = []
+    const walk = (n) => {
+      if (n == null) return
+      if (Array.isArray(n)) return n.forEach(walk)
+      if (typeof n !== 'object') return
+      if (typeof n.tag === 'function') { try { walk(n.tag(n.props || {})) } catch { /* ignore */ } ; return }
+      if (n.props && n.props['data-bi-tab'] !== undefined) out.push(n)
+      if (n.children) n.children.forEach(walk)
+    }
+    walk(t)
+    return out
+  }
+
+  state.loggedIn = true
+  store.clear(); slot = 0
+  ViewFn()
+  await new Promise((res) => setTimeout(res, 40))
+
+  let tabs = findTabs(render())
+  if (tabs.length < 5) throw new Error('页签数量不对：' + tabs.length)
+
+  const labels = []
+  for (let i = 0; i < tabs.length; i++) {
+    tabs = findTabs(render())
+    const t = tabs[i]
+    const label = String((t.children && t.children[0]) || ('#' + i))
+    labels.push(label)
+    if (t.props && typeof t.props.onClick === 'function') t.props.onClick()
+    const text = collect(render())
+    if (!text.length) throw new Error('页签「' + label + '」渲染出 0 个节点')
+  }
+  console.log('OK  ' + labels.length + ' 个页签都能渲染：' + labels.join(' / '))
+
+  // 「它说了什么」必须能看到正文
+  tabs = findTabs(render())
+  const talkTab = tabs.find((t) => String((t.children && t.children[0]) || '') === '它说了什么')
+  if (!talkTab) throw new Error('找不到「它说了什么」页签')
+  talkTab.props.onClick()
+  const talkText = collect(render())
+  if (!talkText.some((x) => x.includes('它说了什么'))) throw new Error('「它说了什么」页签内容没出来')
+  if (!talkText.some((x) => x.includes('评论') || x.includes('回评论') || x.includes('回我'))) {
+    throw new Error('「它说了什么」里没有任何说话记录')
+  }
+  console.log('OK  「它说了什么」能看到正文（' + talkText.length + ' 个节点）')
+
+  // 「记忆」页签
+  tabs = findTabs(render())
+  const memTab = tabs.find((t) => String((t.children && t.children[0]) || '') === '记忆')
+  if (!memTab) throw new Error('找不到「记忆」页签')
+  memTab.props.onClick()
+  const memText = collect(render())
+  if (!memText.some((x) => x.includes('它记住的东西'))) throw new Error('「记忆」页签内容没出来')
+  console.log('OK  「记忆」页签能渲染（' + memText.length + ' 个节点）')
+
+  // 回总览
+  tabs = findTabs(render())
+  tabs[0].props.onClick()
+  render()
+}
+
 console.log('OK  已登录：显示退出登录、不再显示扫码')
 
 const texts = t2
