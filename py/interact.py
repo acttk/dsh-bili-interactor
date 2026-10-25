@@ -466,7 +466,7 @@ async def do_actions(bvid, cred, args, info=None):
         except Exception as e:
             info = {"bvid": bvid, "error": f"取信息失败：{e}"}
 
-    done, failed = [], []
+    done, failed, skipped = [], [], []
     gap = tuple(getattr(args, "interval", [1.5, 4.0]))
 
     # ⚠️ 风控要认：B站 在「投币」这类写操作上会要二级验证（-401 verify_captcha_level2）。
@@ -500,7 +500,8 @@ async def do_actions(bvid, cred, args, info=None):
                 elif code == 36703:
                     failed.append({"kind": kind, "code": code, "msg": "发太快了，B站 拦了（频率限制）"})
                 elif code == 65006:
-                    failed.append({"kind": kind, "code": code, "msg": "已经赞过了"})
+                    # 已经是想要的状态了，别报成失败（用户会以为插件在乱失败）
+                    skipped.append({"kind": kind, "code": code, "msg": "早就赞过了"})
                 elif code == 65004:
                     failed.append({"kind": kind, "code": code, "msg": "没赞过，取消不了"})
                 else:
@@ -567,12 +568,14 @@ async def do_actions(bvid, cred, args, info=None):
             await step("follow", lambda: u.modify_relation(relation=user_api.RelationType.SUBSCRIBE))
 
     return {
-        "ok": bool(done) and not failed,
+        # 「已经赞过了」这类算 skipped，不算 failed —— 结果是对的，只是没动手
+        "ok": bool(done or skipped) and not failed,
         "partial": bool(done) and bool(failed),
         "riskTripped": riskTripped["hit"],
         "bvid": bvid,
         "info": info,
         "done": done,
+        "skipped": skipped,
         "failed": failed,
     }
 
