@@ -167,6 +167,9 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
       const [vis, setVis] = React.useState({})
       // 环境自检结果（新用户点「检查环境」后填上）
       const [doctor, setDoctor] = React.useState(null)
+      // 宿主加载时会自动跑一次自检并塞进 st.env —— 用户不用点就能看到
+      const envAuto = st && st.env ? st.env : null
+      const doctorView = doctor || envAuto
       // 「碰过的视频」的筛选：全部 / 我说过话的
       const [videoFilter, setVideoFilter] = React.useState('all')
       const [err, setErr] = React.useState('')
@@ -471,25 +474,25 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
       /* ── 总览 ── */
       const overview = h('div', null,
         // 自检：新用户最常卡在「忘了 pip install」，这里直接给能复制的命令
-        h('div', { 'data-bi-card': '', style: doctor && doctor.items && doctor.items.some((x) => !x.ok) ? { borderColor: 'rgba(251,191,36,.5)' } : null },
+        h('div', { 'data-bi-card': '', style: doctorView && doctorView.items && doctorView.items.some((x) => !x.ok) ? { borderColor: 'rgba(251,191,36,.5)' } : null },
           h('div', { 'data-bi-h2': '' }, '环境自检'),
           h('div', { 'data-bi-note': '', style: { marginBottom: 10, lineHeight: 1.7 } },
-            doctor
-              ? (doctor.items.every((x) => x.ok)
+            doctorView
+              ? (doctorView.items.every((x) => x.ok)
                   ? '全部就绪，可以开跑了。'
                   : '下面这些还没弄好，按提示补一下就能用：')
               : '点一下检查这台机器能不能跑这个插件（Python 依赖 / 登录 / API key）。'),
-          h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: doctor ? 10 : 0 } },
+          h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: doctorView ? 10 : 0 } },
             h('button', {
-              'data-bi-btn': '', 'data-variant': doctor ? 'ghost' : 'primary',
+              'data-bi-btn': '', 'data-variant': doctorView ? 'ghost' : 'primary',
               disabled: busy === 'doctor',
               onClick: runDoctor,
-            }, busy === 'doctor' ? '检查中…' : (doctor ? '重新检查' : '检查环境')),
-            doctor && doctor.pyError
-              ? h('span', { 'data-bi-note': '', style: { color: '#f87171', flex: '1 1 200px' } }, 'Python 跑不起来：' + doctor.pyError)
+            }, busy === 'doctor' ? '检查中…' : (doctorView ? '重新检查' : '检查环境')),
+            doctorView && doctorView.pyError
+              ? h('span', { 'data-bi-note': '', style: { color: '#f87171', flex: '1 1 200px' } }, 'Python 跑不起来：' + doctorView.pyError)
               : null),
-          doctor && doctor.items
-            ? h('div', null, doctor.items.map((it) => h('div', {
+          doctorView && doctorView.items
+            ? h('div', null, doctorView.items.map((it) => h('div', {
                 key: it.name,
                 style: { padding: '6px 0', borderTop: '1px solid var(--bi-line)', fontSize: 12.5, lineHeight: 1.7 },
               },
@@ -1132,26 +1135,6 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
                       h('div', { 'data-bi-note': '', style: { marginBottom: 4, color: '#22d3ee' } }, '准备回：'),
                       h('div', { style: { fontSize: 13.5, lineHeight: 1.8 } }, String(x.draft || '')))))
             : null),
-
-        /* ── ★ 环境：Python 路径 ── */
-        h('div', { 'data-bi-card': '' },
-          h('div', { 'data-bi-h2': '' }, 'Python 环境'),
-          h('div', { 'data-bi-note': '', style: { marginBottom: 10, lineHeight: 1.7 } },
-            '插件要调 Python 才能访问 B站 接口。默认会自己找（本插件 venv → 刷B站 venv → PATH），' +
-            '找不到或者你装在别处，就在下面填绝对路径。'),
-          h('div', { 'data-bi-row': '' },
-            h('div', { style: { flex: '1 1 auto' } },
-              h('div', { 'data-bi-lab': '' }, 'Python 路径（可留空）'),
-              h('div', { 'data-bi-note': '', style: { overflowWrap: 'anywhere' } },
-                '例：C:\\Users\\you\\.dsh\\bili-interactor\\.venv\\Scripts\\python.exe')),
-            h('input', {
-              'data-bi-input': '', type: 'text', defaultValue: String(cfg.pythonPath || ''),
-              placeholder: '留空 = 自动找',
-              style: { flex: '0 1 320px', minWidth: 200, fontFamily: 'Consolas,monospace', fontSize: 11.5 },
-              onBlur: (e) => patch({ pythonPath: String(e.target.value || '').trim() }, 'Python 路径'),
-            })),
-          h('div', { 'data-bi-note': '', style: { marginTop: 8 } },
-            '改完点「总览 → 检查环境」验证一下。')),
 
         /* ── ★ 学习：攒笔记，下次说话带上 ── */
         h('div', { 'data-bi-card': '' },
