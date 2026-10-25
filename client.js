@@ -554,6 +554,119 @@ window.__ModuleLoader__.load({
               onBlur: (e) => patch({ replyCount: Math.max(0, Math.min(20, Number(e.target.value) || 0)) }, '回复条数'),
             }))),
 
+        /* ── ★ 别人回了我 → 我去回他（后台监听）── */
+        h('div', { 'data-bi-card': '' },
+          h('div', { 'data-bi-h2': '' }, '回复监听'),
+          h('div', { 'data-bi-note': '', style: { marginBottom: 12, lineHeight: 1.7 } },
+            '开启后，插件在后台每隔一段时间去翻一遍：我发过的评论下面，有没有人回我、我还没回的。' +
+            '有就顺着回过去（沿用同一套人设）。'),
+          h('div', { 'data-bi-row': '' },
+            h('div', null,
+              h('div', { 'data-bi-lab': '' }, '有人回我就回他'),
+              h('div', { 'data-bi-note': '' }, '关掉 = 完全不理别人回我的话')),
+            h(Switch, { on: cfg.doReplyBack !== false, onChange: (v) => patch({ doReplyBack: v }, '回复监听') })),
+          h('div', { 'data-bi-row': '' },
+            h('div', null,
+              h('div', { 'data-bi-lab': '' }, '每条评论下最多回几句'),
+              h('div', { 'data-bi-note': '' }, '0 = 不限（有人回就一直聊下去）')),
+            h('input', {
+              'data-bi-input': '', type: 'number', min: 0, max: 9999, defaultValue: String(cfg.replyBackMax ?? 0),
+              onBlur: (e) => patch({ replyBackMax: Math.max(0, Number(e.target.value) || 0) }, '回复上限'),
+            })),
+          h('div', { 'data-bi-row': '' },
+            h('div', null,
+              h('div', { 'data-bi-lab': '' }, '每隔多少分钟查一次'),
+              h('div', { 'data-bi-note': '' }, '最小 5 分钟。查太勤容易被 B站 当脚本')),
+            h('input', {
+              'data-bi-input': '', type: 'number', min: 5, max: 720, defaultValue: String(cfg.listenIntervalMin ?? 20),
+              onBlur: (e) => patch({ listenIntervalMin: Math.max(5, Number(e.target.value) || 20) }, '检查间隔'),
+            })),
+          h('div', { 'data-bi-row': '' },
+            h('div', null,
+              h('div', { 'data-bi-lab': '' }, '只往回看多少小时内我发的评论'),
+              h('div', { 'data-bi-note': '' }, '太久远的楼就别翻了，省请求')),
+            h('input', {
+              'data-bi-input': '', type: 'number', min: 1, max: 720, defaultValue: String(cfg.listenLookbackHours ?? 72),
+              onBlur: (e) => patch({ listenLookbackHours: Math.max(1, Number(e.target.value) || 72) }, '回看窗口'),
+            })),
+          h('div', { 'data-bi-row': '' },
+            h('div', { style: { flex: '1 1 auto' } },
+              h('div', { 'data-bi-lab': '' }, '监听状态'),
+              h('div', { 'data-bi-note': '', style: { lineHeight: 1.7 } },
+                (() => {
+                  const L = st.listener || {}
+                  const parts = []
+                  parts.push(L.enabled ? '已开启' : '已关闭')
+                  parts.push(L.armed ? '定时器已挂上' : '定时器没挂')
+                  parts.push('每 ' + (L.everyMin || 20) + ' 分钟')
+                  if (L.lastAt) parts.push('上次检查 ' + localTime(L.lastAt))
+                  else parts.push('还没检查过')
+                  const last = L.last
+                  if (last) parts.push(`上次：翻了 ${last.threads || 0} 个楼、回了 ${last.sent || 0} 条`)
+                  return parts.join(' · ')
+                })())),
+            h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
+              h('button', {
+                'data-bi-btn': '', 'data-variant': 'primary', disabled: busy === 'backnow',
+                onClick: async () => {
+                  setBusy('backnow')
+                  try {
+                    const j = await post('/reply-back/now')
+                    if (j && j.ok) {
+                      setMsg(`检查完了：翻了 ${j.threads || 0} 个楼，回了 ${j.sent || 0} 条`)
+                    } else {
+                      setMsg(j?.error || j?.busy ? '正在检查，等它跑完' : '检查失败')
+                    }
+                    load()
+                  } catch (e) { setMsg('检查失败：' + e) }
+                  finally { setBusy('') }
+                },
+              }, busy === 'backnow' ? '正在检查…' : '立刻检查一次'),
+              h('button', {
+                'data-bi-btn': '', 'data-variant': 'ghost', disabled: busy === 'backprev',
+                onClick: async () => {
+                  setBusy('backprev')
+                  try {
+                    const j = await post('/reply-back/preview')
+                    if (j && j.ok) {
+                      const d = j.details || []
+                      if (!d.length) setMsg('翻了一遍，没有需要回的新回复')
+                      else setMsg('预览 ' + d.length + ' 条：' + d.map((x) => x.to + '→「' + String(x.draft).slice(0, 20) + '」').join(' / '))
+                    } else setMsg(j?.error || '预览失败')
+                  } catch (e) { setMsg('预览失败：' + e) }
+                  finally { setBusy('') }
+                },
+              }, busy === 'backprev' ? '生成中…' : '先预览会回什么')))),
+
+        /* ── ★ 学习：攒笔记，下次说话带上 ── */
+        h('div', { 'data-bi-card': '' },
+          h('div', { 'data-bi-h2': '' }, '学习记忆'),
+          h('div', { 'data-bi-note': '', style: { marginBottom: 12, lineHeight: 1.7 } },
+            '刷的时候会从评论区里挑出真正有东西的话记下来（纯情绪、复读、广告不要），' +
+            '也会记下别人跟它说的话。以后再写评论、回别人的时候，会带上这些笔记 —— ' +
+            '这就是它"越来越会说话"的方式。目前已经记了 **' + (st.learnedCount || 0) + '** 条。'),
+          h('div', { 'data-bi-row': '' },
+            h('div', null,
+              h('div', { 'data-bi-lab': '' }, '边刷边学'),
+              h('div', { 'data-bi-note': '' }, '关掉就不再记新东西（已有的还会用）')),
+            h(Switch, { on: cfg.doLearn !== false, onChange: (v) => patch({ doLearn: v }, '学习') })),
+          h('div', { 'data-bi-row': '' },
+            h('div', null,
+              h('div', { 'data-bi-lab': '' }, '一轮最多记几条'),
+              h('div', { 'data-bi-note': '' }, '宁少勿滥，默认 3')),
+            h('input', {
+              'data-bi-input': '', type: 'number', min: 0, max: 20, defaultValue: String(cfg.learnPerRun ?? 3),
+              onBlur: (e) => patch({ learnPerRun: Math.max(0, Number(e.target.value) || 0) }, '学习条数'),
+            })),
+          h('div', { 'data-bi-row': '' },
+            h('div', null,
+              h('div', { 'data-bi-lab': '' }, '说话时参考几条'),
+              h('div', { 'data-bi-note': '' }, '塞太多会变得像在背稿，8 条左右刚好')),
+            h('input', {
+              'data-bi-input': '', type: 'number', min: 0, max: 30, defaultValue: String(cfg.learnUseCount ?? 8),
+              onBlur: (e) => patch({ learnUseCount: Math.max(0, Number(e.target.value) || 0) }, '参考条数'),
+            }))),
+
         /* ── ★ 人设：整张角色卡都能贴进来，不截断 ── */
         h('div', { 'data-bi-card': '' },
           h('div', { 'data-bi-h2': '' }, '它说话的样子（人设）'),

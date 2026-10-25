@@ -738,6 +738,63 @@ async def cmd_comment(args):
     out(interpret_comment_response(resp, args.text))
 
 
+async def cmd_sub_replies(args):
+    """读某条评论下面的子评论（谁回了我）。
+
+    只读。返回 items 里带 is_mine，调用方据此挑「别人回我的、我还没回过的」。
+    """
+    cred = load_credential()
+    from bilibili_api import comment as comment_api
+
+    v = video_obj(args.bvid, cred)
+    try:
+        oid = v.get_aid()
+        if hasattr(oid, "__await__"):
+            oid = await oid
+    except Exception as e:
+        fail(f"拿不到 aid：{e}")
+
+    try:
+        root = comment_api.Comment(
+            oid=int(oid),
+            rpid=int(args.rpid),
+            type_=comment_api.CommentResourceType.VIDEO,
+            credential=cred,
+        )
+        r = await root.get_sub_comments(page_index=1, page_size=int(args.limit or 20))
+    except Exception as e:
+        fail(f"读子评论失败：{e}")
+
+    # 同样是两种形状：直接给数据本体，或包一层 data
+    d = r
+    if isinstance(r, dict) and isinstance(r.get("data"), dict) and "replies" in r["data"]:
+        d = r["data"]
+    elif isinstance(r, dict) and isinstance(r.get("replies"), list):
+        d = r
+    else:
+        d = r if isinstance(r, dict) else {}
+
+    replies = d.get("replies") or []
+    mine = str(getattr(cred, "dedeuserid", "") or "")
+    items = []
+    for c in replies:
+        member = c.get("member") or {}
+        content = c.get("content") or {}
+        uid = str(member.get("mid") or "")
+        items.append({
+            "rpid": str(c.get("rpid_str") or c.get("rpid") or ""),
+            "uid": uid,
+            "uname": member.get("uname") or "",
+            "content": (content.get("message") or "").strip(),
+            "like": c.get("like") or 0,
+            "ctime": c.get("ctime") or 0,
+            "is_mine": bool(mine and uid == mine),
+            # 回复的是哪条子评论（B站 里 parent 链）
+            "parent": str(c.get("parent_str") or c.get("parent") or ""),
+        })
+    out({"ok": True, "bvid": args.bvid, "root": str(args.rpid), "total": len(items), "items": items})
+
+
 async def cmd_comments(args):
     """
     读一条视频的评论区（默认按时间倒序，拿最新的）。
@@ -773,13 +830,18 @@ async def cmd_comments(args):
         d = r["data"]
     replies = (d or {}).get("replies") or []
     me = str(getattr(cred, "dedeuserid", "") or "")
+    only_mine = bool(getattr(args, "mine", False))
     items = []
     for c in replies:
         member = c.get("member") or {}
         content = c.get("content") or {}
         uid = str(member.get("mid") or "")
-        if me and uid == me:
-            continue        # 自己发的不回
+        if only_mine:
+            if not (me and uid == me):
+                continue     # 只要自己的
+        else:
+            if me and uid == me:
+                continue     # 自己发的不回
         items.append({
             "rpid": str(c.get("rpid_str") or c.get("rpid") or ""),
             "uid": uid,
@@ -913,6 +975,12 @@ def build_parser():
     cm.add_argument("--bvid", required=True)
     cm.add_argument("--order", default="time")
     cm.add_argument("--limit", type=int, default=20)
+    cm.add_argument("--mine", action="store_true")   # 只要我自己发的
+
+    sr = sub.add_parser("sub-replies")        # 读某条评论下的子评论（只读）
+    sr.add_argument("--bvid", required=True)
+    sr.add_argument("--rpid", required=True)
+    sr.add_argument("--limit", type=int, default=20)
 
     un = sub.add_parser("uidname")           # UID → 昵称
     un.add_argument("--uid", required=True)
@@ -935,6 +1003,7 @@ CMDS = {
     "run": cmd_run,
     "comment": cmd_comment,
     "comments": cmd_comments,
+    "sub-replies": cmd_sub_replies,
     "uidname": cmd_uidname,
     "dm": cmd_dm,
     "recall-danmaku": cmd_recall_danmaku,
