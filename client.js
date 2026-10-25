@@ -163,6 +163,8 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
       const [memo, setMemo] = React.useState(null)
       // 「先预览会回什么」的结果：完整列出来，不要挤成一行
       const [preview, setPreview] = React.useState(null)
+      // 可见性缓存：rpid -> {public, hint}。B站 收了不代表别人看得见，得单独查。
+      const [vis, setVis] = React.useState({})
       const [err, setErr] = React.useState('')
       const [tab, setTab] = React.useState('overview')
       const [busy, setBusy] = React.useState('')
@@ -180,6 +182,18 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
           setErr(String((e && e.message) || e))
         }
       }, [])
+
+      const loadVis = React.useCallback(async () => {
+        try {
+          const r = await fetch(API + '/visibility', { credentials: 'same-origin' })
+          const j = await r.json()
+          if (j && j.ok) setVis(j.map || {})
+        } catch { /* ignore */ }
+      }, [])
+
+      React.useEffect(() => {
+        if (tab === 'talk') loadVis()
+      }, [tab, loadVis])
 
       // 记忆单独拉：只在打开「记忆」页签时拉一次，不跟着 2 秒轮询跑
       const loadMemo = React.useCallback(async () => {
@@ -533,7 +547,15 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
         h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 6 } },
           h('span', { 'data-bi-chip': '', style: { color: KIND_COLOR[r.kind] || 'var(--bi-dim)' } },
             KIND_LABEL[r.kind] || r.kind),
-          r.ok === false ? h('span', { 'data-bi-chip': '', style: { color: '#f87171' } }, '没发出去') : null,
+          r.ok === false
+            ? h('span', { 'data-bi-chip': '', style: { color: '#f87171' } }, '没发出去')
+            : (() => {
+                const v = vis[String(r.rpid || '')]
+                if (!v) return null
+                if (v.public === true) return h('span', { 'data-bi-chip': '', style: { color: '#4ade80' }, title: v.hint || '' }, '公开')
+                if (v.public === false) return h('span', { 'data-bi-chip': '', style: { color: '#f87171' }, title: v.hint || '' }, '仅自己可见')
+                return h('span', { 'data-bi-chip': '', style: { color: '#fbbf24' }, title: v.hint || '' }, '查不到')
+              })(),
           h('a', {
             'data-bi-bv': '', href: 'https://www.bilibili.com/video/' + (r.bvid || '') + '/',
             target: '_blank', rel: 'noreferrer', title: '打开视频页',
@@ -578,10 +600,32 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
       const talk = h('div', null,
         h('div', { 'data-bi-card': '' },
           h('div', { 'data-bi-h2': '' }, '它说了什么（' + talkRows.length + ' 条）'),
-          h('div', { 'data-bi-note': '', style: { marginBottom: 10 } },
+          h('div', { 'data-bi-note': '', style: { marginBottom: 10, lineHeight: 1.75 } },
             '评论、回别人、回我、私信 —— 全部原文都在这。' +
             '「跳到这一楼」会落到那条顶层评论；如果回复嵌在楼中楼深处，' +
             'B站 不会自动展开，这时点「复制正文」再在页面里 Ctrl+F 粘进去最准。'),
+          // ⚠️ B站 返回成功 ≠ 别人看得见（新号会进审核/折叠）。
+          //    这里对比「带 cookie」和「匿名」两次结果来判定，别让用户白找。
+          h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 } },
+            h('button', {
+              'data-bi-btn': '', 'data-variant': 'ghost', disabled: busy === 'vis',
+              onClick: async () => {
+                setBusy('vis')
+                setMsg('正在查最近 10 条是不是真的公开了，可能要几十秒…')
+                try {
+                  const j = await post('/visibility/check', { limit: 10 })
+                  if (j && j.ok) {
+                    setVis(j.map || {})
+                    setMsg(j.checked
+                      ? `查了 ${j.checked} 条：${j.hidden} 条别人看不到${j.failed ? '，' + j.failed + ' 条查失败' : ''}`
+                      : '最近没有可查的评论')
+                  } else setMsg('检查失败')
+                } catch (e) { setMsg('检查失败：' + e) }
+                finally { setBusy('') }
+              },
+            }, busy === 'vis' ? '检查中…' : '检查这些是不是真的公开了'),
+            h('span', { 'data-bi-note': '', style: { flex: '1 1 240px' } },
+              'B站 返回成功只代表它收了。新号或敏感内容会进审核 —— 那种情况你找得到、别人看不到。')),
           talkRows.length === 0
             ? h('div', { 'data-bi-empty': '' }, '还没说过话')
             : talkRows.map(talkItem)))

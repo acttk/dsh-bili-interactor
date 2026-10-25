@@ -740,6 +740,82 @@ async def cmd_comment(args):
     out(interpret_comment_response(resp, args.text))
 
 
+async def cmd_visible(args):
+    """查某条评论「别人到底看不看得见」。
+
+    ⚠️ 为什么要这个：B站 收了评论（code 0）不等于别人看得见。
+    新号/敏感内容会进审核或折叠，这时候**作者自己用 cookie 查得到，别人查不到**。
+    所以判断方法就是：同一个楼，带 cookie 拉一次、匿名再拉一次，
+    只在带 cookie 时出现的那几条 = 仅自己可见。
+
+    输出：{ok, target, in_self, in_public, visible, hint}
+    """
+    import httpx
+
+    cred = load_credential()
+    bvid = args.bvid
+    target = str(args.rpid)
+    root = str(args.root or args.rpid)
+
+    ua = _ua_headers()
+
+    async def aid_of():
+        async with httpx.AsyncClient(timeout=15, headers=ua) as c:
+            r = await c.get("https://api.bilibili.com/x/web-interface/view", params={"bvid": bvid})
+            j = r.json()
+            return (j.get("data") or {}).get("aid")
+
+    async def replies(aid, with_cred):
+        cookies = {}
+        if with_cred:
+            cookies = {
+                "SESSDATA": getattr(cred, "sessdata", "") or "",
+                "bili_jct": getattr(cred, "bili_jct", "") or "",
+                "DedeUserID": str(getattr(cred, "dedeuserid", "") or ""),
+                "buvid3": getattr(cred, "buvid3", "") or "",
+            }
+        async with httpx.AsyncClient(timeout=15, headers=ua, cookies=cookies) as c:
+            r = await c.get(
+                "https://api.bilibili.com/x/v2/reply/reply",
+                params={"oid": aid, "type": 1, "root": int(root), "ps": 20, "pn": 1},
+            )
+            j = r.json()
+        d = j.get("data") or {}
+        return [str(x.get("rpid")) for x in (d.get("replies") or [])]
+
+    try:
+        aid = await aid_of()
+        if not aid:
+            fail("拿不到 aid（视频不存在或接口变了）")
+        self_ids = await replies(aid, True)
+        pub_ids = await replies(aid, False)
+    except Exception as e:
+        fail(f"查可见性失败：{e}")
+
+    in_self = target in self_ids
+    in_public = target in pub_ids
+
+    hint = ""
+    if in_public:
+        hint = "公开可见"
+    elif in_self:
+        hint = "只有你自己能看到 —— 审核中或被折叠，别人刷不到"
+    else:
+        hint = "你自己也看不到 —— 可能已被删除，或者根本不在这个楼里"
+
+    out({
+        "ok": True,
+        "target": target,
+        "root": root,
+        "in_self": in_self,
+        "in_public": in_public,
+        "visible": in_public,
+        "selfCount": len(self_ids),
+        "publicCount": len(pub_ids),
+        "hint": hint,
+    })
+
+
 async def cmd_sub_replies(args):
     """读某条评论下面的子评论（谁回了我）。
 
@@ -979,6 +1055,11 @@ def build_parser():
     cm.add_argument("--limit", type=int, default=20)
     cm.add_argument("--mine", action="store_true")   # 只要我自己发的
 
+    vs = sub.add_parser("visible")            # 查某条评论别人看不看得见（只读）
+    vs.add_argument("--bvid", required=True)
+    vs.add_argument("--rpid", required=True)
+    vs.add_argument("--root", default="")
+
     sr = sub.add_parser("sub-replies")        # 读某条评论下的子评论（只读）
     sr.add_argument("--bvid", required=True)
     sr.add_argument("--rpid", required=True)
@@ -1006,6 +1087,7 @@ CMDS = {
     "comment": cmd_comment,
     "comments": cmd_comments,
     "sub-replies": cmd_sub_replies,
+    "visible": cmd_visible,
     "uidname": cmd_uidname,
     "dm": cmd_dm,
     "recall-danmaku": cmd_recall_danmaku,
