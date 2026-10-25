@@ -735,9 +735,17 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
               h('div', { 'data-bi-lab': '' }, '每次检查看几条我的评论'),
               h('div', { 'data-bi-note': '', style: { lineHeight: 1.75 } },
                 '你发过的**每条评论**算一条，它下面别人回的都挂在它下面。' +
-                (st.listener && st.listener.totalThreads
-                  ? `你现在有 ${st.listener.totalThreads} 条，每次看 ${cfg.listenMaxThreadsPerTick ?? 15} 条，下一轮接着往下轮。`
-                  : '') +
+                (() => {
+                  const total = (st.listener && st.listener.totalThreads) || 0
+                  const per = Math.max(1, Number(cfg.listenMaxThreadsPerTick) || 15)
+                  if (!total) return ''
+                  if (per >= total) {
+                    return `你现在有 ${total} 条，每次全看（一轮就查完）。`
+                  }
+                  const rounds = Math.ceil(total / per)
+                  return `你现在有 ${total} 条，每次看 ${per} 条，**${rounds} 分钟轮完一圈**` +
+                    `（不会漏，剩下的下一次接着看；新回复最多晚 ${rounds} 分钟被发现）。`
+                })() +
                 `设成 ${cfg.listenMaxThreadsPerTick ?? 15} 就意味着**每分钟最多 ${cfg.listenMaxThreadsPerTick ?? 15} 次请求**，` +
                 '设太大容易被 B站 当脚本。楼不多的话填个比总数大的值也没关系（不会超）。')),
             h('input', {
