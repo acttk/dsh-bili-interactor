@@ -140,8 +140,8 @@ console.log('OK  /login/view 无码: pending=false loggedIn=false 无图')
 
 // 2) 放一张 1 分钟内的码：pending=true 且带图
 const pngTiny = Buffer.from('89504E470D0A1A0A0000000D4948445200000001000000010802000000907753DE', 'hex')
-wf(qrFile, pngTiny)
-wf(loginFile, JSON.stringify({ qrcodeKey: 'TESTKEY123', at: Date.now() - 30000 }), 'utf8')
+// 新结构：图和 key 存在同一个 login.json 里（原子快照）
+wf(loginFile, JSON.stringify({ qrcodeKey: 'TESTKEY123', at: Date.now() - 30000, gen: 1, image: pngTiny.toString('base64') }), 'utf8')
 
 view = await call('GET', '/api/bili-itx/login/view')
 if (view.json.pending !== true) throw new Error('有码却报 pending=false')
@@ -156,10 +156,9 @@ if (view.json.pending !== false) throw new Error('过期码却报 pending=true')
 if (view.json.image) throw new Error('过期码不该返回图片')
 console.log('OK  /login/view 过期码: pending=false 且不返回图片')
 
-// 4) 已登录时：loggedIn=true（即使还残留 qr.png 也不能影响）
+// 4) 已登录时：loggedIn=true（即使还残留二维码也不能影响）
 wf(HOME_S + '\\credential.json', JSON.stringify({ sessdata: 'x', bili_jct: 'y', buvid3: 'z', dedeuserid: '1' }), 'utf8')
-wf(qrFile, pngTiny)
-wf(loginFile, JSON.stringify({ qrcodeKey: 'K2', at: Date.now() - 10000 }), 'utf8')
+wf(loginFile, JSON.stringify({ qrcodeKey: 'K2', at: Date.now() - 10000, gen: 2, image: pngTiny.toString('base64') }), 'utf8')
 view = await call('GET', '/api/bili-itx/login/view')
 if (view.json.loggedIn !== true) throw new Error('有凭证却报 loggedIn=false')
 console.log('OK  /login/view 已登录: loggedIn=true（残留二维码不影响判定）')
