@@ -1,6 +1,8 @@
 // 复现并验证用户报的那个场景：
 //   扫码 -> 界面显示「扫到了，去手机确认」 -> 用户还没点确认，码过期
 // 期望：界面必须明确告诉他「你刚扫的那张废了，重新扫」，而不是悄悄换一张新的。
+//
+// 登录已改为 Node 实现（lib/login.mjs），用 globalThis.__BILI_LOGIN_STUB__ 打桩。
 import { join } from 'node:path'
 import { rmSync, mkdirSync } from 'node:fs'
 
@@ -8,9 +10,27 @@ const ROOT = 'C:\\Users\\user\\Desktop\\DSH\\dsh-bili-interactor'
 const HOME = join(process.env.TEMP, 'bi-seq')
 process.env.BILI_INTERACTOR_HOME = HOME
 process.env.DSH_HOME = join(process.env.TEMP, 'bi-seq-dsh')
-process.env.BILI_INTERACTOR_SCRIPT = join(ROOT, 'tests', '_stub_seq.py')
 try { rmSync(HOME, { recursive: true, force: true }) } catch {}
 mkdirSync(HOME, { recursive: true })
+
+// 桩：先 waiting，再 scanned（用户扫了），然后 expired（还没确认就死了）
+let polls = 0
+let gen = 0
+globalThis.__BILI_LOGIN_STUB__ = {
+  async loginStart() {
+    gen++
+    return { key: 'SEQKEY_' + gen, url: 'https://example.invalid/qr' }
+  },
+  async loginPoll() {
+    polls++
+    if (polls === 1) return { state: 'waiting', code: 86101 }
+    if (polls === 2) return { state: 'scanned', code: 86090 }
+    return { state: 'expired', code: 86038 }
+  },
+  renderQrDataUrl() {
+    return 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC'
+  },
+}
 
 let ok = 0, bad = 0
 const check = (n, c, extra = '') => {
@@ -51,14 +71,14 @@ check('拿到码', !!qr.json.qrcodeKey, qr.json.qrcodeKey)
 
 console.log('== 等后台轮询走到 conf（模拟用户扫了码）==')
 let sawConf = false
-for (let i = 0; i < 14; i++) {
+for (let i = 0; i < 20; i++) {
   await sleep(300)
   const v = await call('GET', '/api/bili-itx/login/view')
   if (v.json.state === 'conf') { sawConf = true; break }
 }
 check('界面进入了 conf（扫到了）', sawConf)
 
-console.log('== 再等：桩随后返回 timeout，模拟「还没点确认就过期」==')
+console.log('== 再等：桩返回 expired，模拟「还没点确认就过期」==')
 let sawExpired = false
 for (let i = 0; i < 30; i++) {
   await sleep(300)
