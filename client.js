@@ -765,11 +765,15 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
                   if (L.todayDone !== undefined) {
                     parts.push('今天已回 ' + L.todayDone + (L.perDay > 0 ? '/' + L.perDay : '（不限）'))
                   }
-                  if (L.totalThreads) parts.push('我的评论共 ' + L.totalThreads + ' 条')
+
                   if (L.lastAt) parts.push('上次检查 ' + localTime(L.lastAt))
                   else parts.push('还没检查过')
                   const last = L.last
-                  if (last) parts.push(`上次：翻了 ${last.threads || 0} 个楼、回了 ${last.sent || 0} 条`)
+                  if (last) {
+                    parts.push(
+                      `上次：一共 ${last.threads || 0} 个楼，这次看了 ${last.checked || 0} 个，回了 ${last.sent || 0} 条`
+                    )
+                  }
                   return parts.join(' · ')
                 })())),
             h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
