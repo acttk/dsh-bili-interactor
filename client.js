@@ -595,15 +595,21 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
         loginCard,
         h('div', { 'data-bi-card': '' },
           h('div', { 'data-bi-h2': '' }, '今天'),
+          // ⚠️ 这里必须统一用 q.today（计入额度的动作数），
+          //    不能用 t.actions（账本今天的总行数，含不占额度的监听回复）。
+          //    混着用会出现「312 / 300 还剩 130」这种自相矛盾的显示。
           h('div', { 'data-bi-grid': '' },
-            h(Stat, { n: String(t.actions || 0), label: '今天动了几次', color: '#4ade80' }),
+            h(Stat, { n: String(q.today || 0), label: '今天动了（计入额度）', color: '#4ade80' }),
             h(Stat, { n: q.unlimited ? '不限' : String(q.left || 0), label: '还剩额度' }),
             h(Stat, { n: String(q.coins || 0), label: '今天投的币', color: '#fbbf24' }),
             h(Stat, { n: String((t.videos || []).length), label: '碰过几条视频' })),
           h('div', { 'data-bi-bar': '' },
-            h('i', { style: { width: q.limit ? Math.min(100, ((t.actions || 0) / q.limit) * 100) + '%' : '0%' } })),
+            h('i', { style: { width: q.limit ? Math.min(100, ((q.today || 0) / q.limit) * 100) + '%' : '0%' } })),
           h('div', { 'data-bi-note': '' },
-            `今日额度 ${t.actions || 0} / ${q.limit || 0} · 上限到了就自动停，不会硬冲`),
+            `今日额度 ${q.today || 0} / ${q.unlimited ? '不限' : q.limit} · 到上限会自动停` +
+            ((t.actions || 0) > (q.today || 0)
+              ? ` · 另有 ${(t.actions || 0) - (q.today || 0)} 条是「接着回」（不占额度）`
+              : '')),
           // 额度用完时，直接给「去调高」—— 否则用户得自己翻到设置里找
           !q.unlimited && (q.left || 0) <= 0
             ? h('div', {
@@ -1327,7 +1333,20 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
           })),
 
         h('div', { 'data-bi-card': '' },
-          h('div', { 'data-bi-h2': '' }, '额度和节奏（都是上限，想调多大都行）'),
+          h('div', { 'data-bi-h2': '' }, '额度和节奏'),
+          h('div', { 'data-bi-note': '', style: { marginBottom: 10, lineHeight: 1.8 } },
+            '三个数字别搞混：', h('br'),
+            '· 「每轮刷几条视频」= 跑一次看几条视频（你真正想调的那个）', h('br'),
+            '· 「一轮最多动几次」= 一次最多做多少个动作（点赞/投币/弹幕/评论/回复都算），是护栏', h('br'),
+            '· 「一天最多动几次」= 全天累计的动作上限，跟视频条数无关'),
+          h('div', { 'data-bi-row': '' },
+            h('div', null,
+              h('div', { 'data-bi-lab': '' }, '每轮刷几条视频'),
+              h('div', { 'data-bi-note': '' }, '跑一次最多看几条。填 0 = 只受下面两个护栏限制')),
+            h('input', {
+              'data-bi-input': '', type: 'number', min: 0, max: 100, defaultValue: String(cfg.maxVideosPerRun ?? 5),
+              onBlur: (e) => patch({ maxVideosPerRun: Math.max(0, Math.min(100, Number(e.target.value) || 0)) }, '每轮视频数'),
+            })),
           h('div', { 'data-bi-row': '' },
             h('div', null,
               h('div', { 'data-bi-lab': '' }, '一轮最多动几次'),

@@ -263,7 +263,7 @@ state.ownLogin = true
 console.log('OK  已登录：显示退出登录、不再显示扫码')
 
 const texts = t2
-for (const want of ['B站互动', '总览', '互动', '过程', '设置', '今天动了几次', '还剩额度']) {
+for (const want of ['B站互动', '总览', '互动', '过程', '设置', '今天动了', '还剩额度']) {
   if (!texts.some((x) => x.includes(want))) throw new Error('渲染结果里没有「' + want + '」')
 }
 
