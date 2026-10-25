@@ -740,6 +740,80 @@ async def cmd_comment(args):
     out(interpret_comment_response(resp, args.text))
 
 
+async def cmd_doctor(args):
+    """自检：这个环境能不能正常干活，缺什么，怎么补。
+
+    只读，不改任何东西。任何一项失败都要给出**能直接复制执行的命令**。
+    """
+    import importlib
+    import sys
+
+    items = []
+
+    def add(name, ok, detail, fix=""):
+        items.append({"name": name, "ok": bool(ok), "detail": detail, "fix": fix})
+
+    # 1) Python 版本
+    v = sys.version_info
+    add("Python", v >= (3, 10), f"{v.major}.{v.minor}.{v.micro}",
+        "装 Python 3.10 或更新版本" if v < (3, 10) else "")
+
+    # 2) 关键依赖
+    req = [
+        ("bilibili-api-python", "bilibili_api", True),
+        ("httpx", "httpx", True),
+        ("qrcode", "qrcode", True),
+        ("pillow", "PIL", True),
+    ]
+    for pip_name, mod, required in req:
+        try:
+            importlib.import_module(mod)
+            add(pip_name, True, "已安装")
+        except Exception:
+            add(pip_name, False, "缺这个包",
+                f"{sys.executable} -m pip install {pip_name}")
+
+    # 3) 登录凭证（本插件自己那份）
+    cred_ok = False
+    cred_detail = "还没登录"
+    try:
+        if OWN_CRED.exists():
+            import json as _json
+            j = _json.loads(OWN_CRED.read_text(encoding="utf-8"))
+            if j.get("sessdata"):
+                cred_ok = True
+                cred_detail = f"已登录（uid {j.get('dedeuserid') or '?'}）"
+            else:
+                cred_detail = "凭证文件在，但里面没有 SESSDATA"
+        else:
+            shared = OWN_HOME.parent / "bili-duty" / "bili_credential.json"
+            if shared.exists():
+                cred_detail = "没单独登录，但检测到「刷B站」的凭证（可借用）"
+    except Exception as e:
+        cred_detail = f"读不了凭证：{e}"
+    add("B站 登录", cred_ok, cred_detail,
+        "在插件设置里点「扫码登录」" if not cred_ok else "")
+
+    # 4) 本地转写（可选）
+    asr_py, asr_script = _asr_paths()
+    if asr_py:
+        add("本地转写（可选）", True, "环境就绪")
+    else:
+        add("本地转写（可选）", True, "没装 —— 不影响使用，只有连字幕都没有的视频才用得上",
+            "想装就跑 scripts/setup-asr.ps1（Windows）或 scripts/setup-asr.sh")
+
+    fatal = [x for x in items if not x["ok"]]
+    out({
+        "ok": True,
+        "python": sys.executable,
+        "home": str(OWN_HOME),
+        "items": items,
+        "fatalCount": len(fatal),
+        "ready": len(fatal) == 0,
+        "hint": "" if not fatal else "有 " + str(len(fatal)) + " 项没就绪，按下面的命令补一下",
+    })
+
+
 def _asr_paths():
     """找转写环境：先看本插件自己的，再复用「刷B站」那份。
 
@@ -1299,6 +1373,8 @@ def build_parser():
     cm.add_argument("--limit", type=int, default=20)
     cm.add_argument("--mine", action="store_true")   # 只要我自己发的
 
+    sub.add_parser("doctor")                  # 自检：环境能不能干活（只读）
+
     tr = sub.add_parser("transcribe")         # 本地转写（Whisper，慢，没字幕时用）
     tr.add_argument("--bvid", required=True)
     tr.add_argument("--timeout", type=int, default=420)
@@ -1348,6 +1424,7 @@ CMDS = {
     "visible": cmd_visible,
     "watch": cmd_watch,
     "transcribe": cmd_transcribe,
+    "doctor": cmd_doctor,
     "digest": cmd_digest,
     "uidname": cmd_uidname,
     "dm": cmd_dm,
