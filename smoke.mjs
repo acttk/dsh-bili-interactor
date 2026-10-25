@@ -267,6 +267,11 @@ for (const want of ['B站互动', '总览', '互动', '过程', '设置', '今�
   if (!texts.some((x) => x.includes(want))) throw new Error('渲染结果里没有「' + want + '」')
 }
 
+// 模板里直接拼对象会渲染成 [object Object]（副标题曾经就是这样坏的）
+if (texts.some((x) => String(x).includes('[object Object]'))) {
+  throw new Error('[object Object] 漏到界面上了 —— 模板里拼了对象而不是它的某个字段')
+}
+
 console.log('OK  带数据渲染通过：' + texts.length + ' 个文本节点')
 console.log('OK  quota=' + JSON.stringify(state.quota))
 console.log('OK  live 行数=' + state.live.lines.length + ' / ledger 条数=' + state.recent.length)

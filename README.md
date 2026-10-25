@@ -30,6 +30,41 @@
 
 ---
 
+## 截图
+
+> 图里是演示数据，不是真实账号内容。
+
+**总览** —— 今天动了多少次、额度用了多少、这一轮在干什么
+
+![总览](assets/shots/01-overview.png)
+
+**它说了什么** —— 每条原文都在，可跳到对应楼层、可检查是否真的公开
+
+![它说了什么](assets/shots/02-talk.png)
+
+**碰过的视频** —— 每条视频下我说过什么，带直达链接
+
+![碰过的视频](assets/shots/03-videos.png)
+
+<details>
+<summary>另外三页（记忆 / 过程 / 设置）</summary>
+
+**记忆** —— 学到了什么、几分、为什么记、从哪来
+
+![记忆](assets/shots/04-memory.png)
+
+**过程** —— 这一轮的实时实录，包括为什么跳过某条
+
+![过程](assets/shots/05-process.png)
+
+**设置** —— 全部开关和限额
+
+![设置](assets/shots/06-settings.png)
+
+</details>
+
+---
+
 ## 环境要求
 
 - **DSH**（Desktop 版，带插件系统）

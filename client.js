@@ -461,7 +461,7 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
           ? h('div', { 'data-bi-card': '', style: { borderColor: 'rgba(251,191,36,.55)' } },
               h('div', { 'data-bi-h2': '', style: { color: '#fbbf24' } }, '⚠️ 没有 DeepSeek key，人设不会生效'),
               h('div', { 'data-bi-note': '', style: { lineHeight: 1.75 } },
-                '评论、回复、学习都会退回**内置模板和粗筛**：你写的角色卡、语气、' +
+                '评论、回复、学习都会退回内置模板和粗筛：你写的角色卡、语气、' +
                 '「什么才值得记」都不会被用上。' +
                 '配一个 DeepSeek key（放到 ~/.dsh/.credentials.yaml）之后这些才会真的生效。'))
           : null,
@@ -802,12 +802,12 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
           h('div', { 'data-bi-note': '', style: { marginTop: 4, marginBottom: 8, lineHeight: 1.7 } },
             '共 ' + actSum + ' 次动作，其中 ' + talkSum + ' 条是说过的话。按最近动过的排前面。'),
           h('div', { 'data-bi-note': '', style: { marginBottom: 10, lineHeight: 1.95 } },
-            '· ', h('b', null, '评论'), ' = 我自己在视频下发的**新**评论（带 @ 你的那条）。话题是我开的。',
+            '· ', h('b', null, '评论'), ' = 我自己在视频下发的新评论（带 @ 你的那条）。话题是我开的。',
             h('br'),
             '· ', h('b', null, '回评论'), ' = 别人在视频下发了一条评论，我去接他的话。' +
-            '话题是**他**开的，我是插话的。只在跑一轮时做，每条视频最多「上面设的条数」。',
+            '话题是他开的，我是插话的。只在跑一轮时做，每条视频最多「上面设的条数」。',
             h('br'),
-            '· ', h('b', null, '接着回'), ' = 别人回的是**我发过的评论**，等于在跟我说话。' +
+            '· ', h('b', null, '接着回'), ' = 别人回的是我发过的评论，等于在跟我说话。' +
             '这才算对话，由后台监听每分钟检查。'),
           videos.length
             ? h('div', { style: { display: 'flex', gap: 8, marginBottom: 6, flexWrap: 'wrap' } },
@@ -956,7 +956,7 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
             h('div', { style: { flex: '1 1 auto' } },
               h('div', { 'data-bi-lab': '' }, '每次检查看几条我的评论'),
               h('div', { 'data-bi-note': '', style: { lineHeight: 1.75 } },
-                '你发过的**每条评论**算一条，它下面别人回的都挂在它下面。' +
+                '你发过的每条评论算一条，它下面别人回的都挂在它下面。' +
                 (() => {
                   const total = (st.listener && st.listener.totalThreads) || 0
                   const per = Math.max(1, Number(cfg.listenMaxThreadsPerTick) || 15)
@@ -965,10 +965,10 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
                     return `你现在有 ${total} 条，每次全看（一轮就查完）。`
                   }
                   const rounds = Math.ceil(total / per)
-                  return `你现在有 ${total} 条，每次看 ${per} 条，**${rounds} 分钟轮完一圈**` +
+                  return `你现在有 ${total} 条，每次看 ${per} 条，${rounds} 分钟轮完一圈` +
                     `（不会漏，剩下的下一次接着看；新回复最多晚 ${rounds} 分钟被发现）。`
                 })() +
-                `设成 ${cfg.listenMaxThreadsPerTick ?? 15} 就意味着**每分钟最多 ${cfg.listenMaxThreadsPerTick ?? 15} 次请求**，` +
+                `设成 ${cfg.listenMaxThreadsPerTick ?? 15} 就意味着每分钟最多 ${cfg.listenMaxThreadsPerTick ?? 15} 次请求，` +
                 '设太大容易被 B站 当脚本。楼不多的话填个比总数大的值也没关系（不会超）。')),
             h('input', {
               'data-bi-input': '', type: 'number', min: 1, max: 100, defaultValue: String(cfg.listenMaxThreadsPerTick ?? 15),
@@ -1083,7 +1083,7 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
           h('div', { 'data-bi-note': '', style: { marginBottom: 12, lineHeight: 1.7 } },
             '刷的时候会从评论区里挑出真正有东西的话记下来（纯情绪、复读、广告不要），' +
             '也会记下别人跟它说的话。以后再写评论、回别人的时候，会带上这些笔记 —— ' +
-            '这就是它"越来越会说话"的方式。目前已经记了 **' + (st.learnedCount || 0) + '** 条。'),
+            '这就是它"越来越会说话"的方式。目前已经记了 ' + (st.learnedCount || 0) + ' 条。'),
           h('div', { 'data-bi-row': '' },
             h('div', null,
               h('div', { 'data-bi-lab': '' }, '边刷边学'),
@@ -1160,7 +1160,7 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
         h('div', { 'data-bi-card': '' },
           h('div', { 'data-bi-h2': '' }, '它说话的样子（人设）'),
           h('div', { 'data-bi-note': '', style: { marginBottom: 10, lineHeight: 1.7 } },
-            '把角色卡整段贴进来就行 —— 这里**不截断**，写多长都行。评论和弹幕都照这个说话。'),
+            '把角色卡整段贴进来就行 —— 这里不截断，写多长都行。评论和弹幕都照这个说话。'),
           h('textarea', {
             'data-bi-input': '', style: {
               width: '100%', minHeight: 180, resize: 'vertical', fontFamily: 'inherit',
@@ -1184,7 +1184,7 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
           h('div', { 'data-bi-row': '' },
             h('div', null,
               h('div', { 'data-bi-lab': '' }, '一轮最多动几次'),
-              h('div', { 'data-bi-note': '' }, '点赞、投币、弹幕、评论、回复**全算在内**。到数就停，不会硬凑')),
+              h('div', { 'data-bi-note': '' }, '点赞、投币、弹幕、评论、回复全算在内。到数就停，不会硬凑')),
             h('input', {
               'data-bi-input': '', type: 'number', min: 0, max: 2000, defaultValue: cfg.maxActionsPerRun,
               onBlur: (e) => patch({ maxActionsPerRun: Math.max(0, Math.min(2000, Number(e.target.value) || 0)) }, '每轮上限'),
@@ -1216,7 +1216,7 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
         h('div', { 'data-bi-card': '', style: cfg.doDm ? { borderColor: 'rgba(251,191,36,.45)' } : null },
           h('div', { 'data-bi-h2': '' }, '私信通知'),
           h('div', { 'data-bi-note': '', style: { marginBottom: 10, lineHeight: 1.7 } },
-            '默认关闭。开了之后，评论成功会给你发一条私信提醒 —— 但**私信发出去撤不回**，B站 没有可用的撤回接口。'),
+            '默认关闭。开了之后，评论成功会给你发一条私信提醒 —— 但私信发出去撤不回，B站 没有可用的撤回接口。'),
           h('div', { 'data-bi-row': '' },
             h('div', null,
               h('div', { 'data-bi-lab': '' }, '发私信通知我'),
@@ -1313,8 +1313,13 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
         h('div', { 'data-bi-head': '' },
           h('div', null,
             h('div', { 'data-bi-title': '' }, 'B站互动'),
+            // ⚠️ st.today 是对象（{actions, byType, videos}），直接塞进模板会变成
+            //    「[object Object] · 懂你在刷什么…」，这个副标题一直是坏的。取 actions。
             h('div', { 'data-bi-sub': '' },
-              `${st.today || ''} · 懂你在刷什么，也真的会点 · 2 秒自动刷新`)),
+              (() => {
+                const acts = st.today && typeof st.today === 'object' ? Number(st.today.actions) || 0 : 0
+                return `今天动了 ${acts} 次 · 懂你在刷什么，也真的会点 · 2 秒自动刷新`
+              })())),
           h('span', { 'data-bi-pill': pillState },
             h('span', { 'data-bi-dot': '' }),
             pillText)),
