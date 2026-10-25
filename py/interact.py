@@ -630,7 +630,74 @@ async def cmd_run(args):
     out({"event": "done", "total": total, "ok": ok_n, "results": results})
 
 
+def interpret_comment_response(resp, text):
+    """把 B站 发评论的响应翻译成 {ok, rpid} 或 {ok:False, code, error}。
+
+    抽成纯函数是为了能单测：这个判断以前写错过一次 —— 用 `.result`
+    拿到的是 data 本体（没有 code 字段），却按 r.get("code") == 0 判断，
+    永远 False，把成功当失败，界面上报「code null」。
+    """
+    if not isinstance(resp, dict):
+        return {"ok": False, "code": None, "error": "响应不是 JSON 对象：%r" % (resp,)}
+
+    code = resp.get("code")
+    msg = resp.get("message") or resp.get("msg") or ""
+
+    def _dig_rpid(obj):
+        if not isinstance(obj, dict):
+            return None
+        rp = obj.get("rpid")
+        return (
+            obj.get("rpid_str")
+            or (rp.get("rpid_str") if isinstance(rp, dict) else None)
+            or (rp if not isinstance(rp, (dict, list)) else None)
+            or obj.get("rpid")
+        )
+
+    if code == 0:
+        rpid = _dig_rpid(resp.get("data"))
+        return {"ok": True, "rpid": str(rpid) if rpid else None, "text": text}
+
+    # 兼容历史形状：bilibili_api 的 `.result` 直接给 data 本体，没有 code。
+    # 这种响应里只要有 rpid，就是真的发出去了 —— 不能再判成失败。
+    if code is None:
+        rpid = _dig_rpid(resp)
+        if rpid:
+            return {"ok": True, "rpid": str(rpid), "text": text}
+
+    hint = ""
+    if code in (-412, -352, -351):
+        hint = "触发了 B站 风控，等一会儿再试，别连着发"
+    elif code == 12002:
+        hint = "这条视频的评论区关了"
+    elif code == 12009:
+        hint = "参数不对（比如 oid/type 配错），多半是这条目标不是普通视频"
+    elif code == -101:
+        hint = "账号未登录或凭证失效，重新扫码登录"
+    elif code == 12015:
+        hint = "需要先做一次验证码验证（去网页版评论区手动发一条）"
+    return {
+        "ok": False,
+        "code": code,
+        "error": (msg or "B站 没给原因") + (("（" + hint + "）") if hint else ""),
+        "raw": json.dumps(resp, ensure_ascii=False)[:400],
+    }
+
+
 async def cmd_comment(args):
+    """发评论 / 回复评论。
+
+    ⚠️ 这里**不用** comment.send_comment，因为它返回的是 `.result`，
+    也就是 data 本体（{rpid, rpid_str, ...}），**没有 code 字段**。
+    以前拿 r.get("code") == 0 判断，永远 False，于是把成功当失败，
+    报出来就是「code null」——评论其实可能已经发出去了，界面却说没发出去。
+
+    现在直接走 Api(raw=True)，拿到完整的 {code, message, data}，
+    B站 到底说了什么一目了然。
+    """
+    from bilibili_api.utils.network import Api
+    from bilibili_api.utils.utils import get_api
+
     cred = load_credential()
     from bilibili_api import comment as comment_api
 
@@ -642,28 +709,30 @@ async def cmd_comment(args):
     except Exception as e:
         fail(f"拿不到 aid：{e}")
 
-    kwargs = {
-        "text": args.text,
+    data = {
         "oid": int(oid),
-        "type_": comment_api.CommentResourceType.VIDEO,
-        "credential": cred,
+        "type": comment_api.CommentResourceType.VIDEO.value,
+        "message": args.text,
+        "plat": 1,
+        "statistics": {"appId": 100, "platform": 5},
+        "gaia_source": "main_web",
     }
-    if args.root:
-        kwargs["root"] = int(args.root)
-    if args.parent:
-        kwargs["parent"] = int(args.parent)
-    try:
-        r = await comment_api.send_comment(**kwargs)
-    except Exception as e:
-        fail(f"发送失败：{e}")
+    if args.root and args.parent:
+        data["root"] = int(args.root)
+        data["parent"] = int(args.parent)
+    elif args.root:
+        data["root"] = int(args.root)
+        data["parent"] = int(args.root)
+    elif args.parent:
+        fail("只给了 parent 没给 root，B站 不接受这种组合")
 
-    if r.get("code") == 0:
-        d = r.get("data") or {}
-        rp = (d.get("rpid") or {})
-        rpid = d.get("rpid_str") or (rp.get("rpid_str") if isinstance(rp, dict) else rp) or d.get("rpid")
-        out({"ok": True, "rpid": str(rpid) if rpid else None, "text": args.text})
-    else:
-        out({"ok": False, "code": r.get("code"), "error": r.get("message")})
+    api_info = get_api("common")["comment"]["send"]
+    try:
+        resp = await Api(**api_info, credential=cred).update_data(**data).request(raw=True)
+    except Exception as e:
+        fail(f"发送失败（网络/异常）：{e}")
+
+    out(interpret_comment_response(resp, args.text))
 
 
 async def cmd_comments(args):
