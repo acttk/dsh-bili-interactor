@@ -66,6 +66,12 @@ r = f({"code": 12002, "message": "评论已关闭"}, "hi")
 check("ok=False", r.get("ok") is False, r)
 check("提示评论区关了", "评论区" in (r.get("error") or ""), r)
 
+print("== 6b) 评论发送频率上限 12014：要给可操作提示 ==")
+r = f({"code": 12014, "message": "发送失败，已达到当前评论发送上限"}, "hi")
+check("ok=False", r.get("ok") is False, r)
+check("提示频率限制", "频率" in (r.get("error") or ""), r)
+check("提示先停一会儿", "先停" in (r.get("error") or ""), r)
+
 print("== 7) 失败但 B站 没给原因，也要能看懂 ==")
 r = f({"code": 12345}, "hi")
 check("ok=False", r.get("ok") is False, r)

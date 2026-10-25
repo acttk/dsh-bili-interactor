@@ -135,6 +135,8 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
     function Panel() {
       const [st, setSt] = React.useState(null)
       const [memo, setMemo] = React.useState(null)
+      // 「先预览会回什么」的结果：完整列出来，不要挤成一行
+      const [preview, setPreview] = React.useState(null)
       const [err, setErr] = React.useState('')
       const [tab, setTab] = React.useState('overview')
       const [busy, setBusy] = React.useState('')
@@ -687,7 +689,7 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
           h('div', { 'data-bi-row': '' },
             h('div', null,
               h('div', { 'data-bi-lab': '' }, '每条视频最多回几条'),
-              h('div', { 'data-bi-note': '' }, '0 = 只发顶层评论，不回别人')),
+              h('div', { 'data-bi-note': '' }, '0 = 只发顶层评论，不回别人。B站 有评论频率上限（12014），一次别设太大')),
             h('input', {
               'data-bi-input': '', type: 'number', min: 0, max: 20, defaultValue: cfg.replyCount,
               onBlur: (e) => patch({ replyCount: Math.max(0, Math.min(20, Number(e.target.value) || 0)) }, '回复条数'),
@@ -773,17 +775,55 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
                 'data-bi-btn': '', 'data-variant': 'ghost', disabled: busy === 'backprev',
                 onClick: async () => {
                   setBusy('backprev')
+                  setMsg('正在翻自己发过的楼，可能几十秒…')
                   try {
                     const j = await post('/reply-back/preview')
                     if (j && j.ok) {
-                      const d = j.details || []
-                      if (!d.length) setMsg('翻了一遍，没有需要回的新回复')
-                      else setMsg('预览 ' + d.length + ' 条：' + d.map((x) => x.to + '→「' + String(x.draft).slice(0, 20) + '」').join(' / '))
-                    } else setMsg(j?.error || '预览失败')
+                      setPreview({
+                        at: new Date().toISOString(),
+                        threads: j.threads || 0,
+                        checked: j.checked || 0,
+                        items: j.details || [],
+                      })
+                      setMsg('')
+                    } else {
+                      setMsg(j?.error || '预览失败')
+                    }
                   } catch (e) { setMsg('预览失败：' + e) }
                   finally { setBusy('') }
                 },
-              }, busy === 'backprev' ? '生成中…' : '先预览会回什么')))),
+              }, busy === 'backprev' ? '生成中…' : '先预览会回什么'))),
+
+          // 预览结果：完整列出「对方说了什么 → 它准备怎么回」，不发送
+          preview
+            ? h('div', {
+                style: {
+                  marginTop: 12, padding: '10px 12px', borderRadius: 10,
+                  border: '1px solid rgba(34,211,238,.35)', background: 'rgba(34,211,238,.06)',
+                },
+              },
+                h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 } },
+                  h('div', { 'data-bi-lab': '', style: { color: '#22d3ee' } }, '预览（这些只是草稿，没有发出去）'),
+                  h('span', { 'data-bi-note': '', style: { flex: '1 1 auto' } },
+                    `翻了 ${preview.threads} 个楼、查了 ${preview.checked} 个 · ${localTime(preview.at)}`),
+                  h('button', {
+                    'data-bi-btn': '', 'data-variant': 'ghost',
+                    style: { padding: '3px 9px', fontSize: 11.5 },
+                    onClick: () => setPreview(null),
+                  }, '收起')),
+                (preview.items || []).length === 0
+                  ? h('div', { 'data-bi-note': '' }, '这一轮没有需要回的新回复（没人回我，或者都已经回过了）')
+                  : (preview.items || []).map((x, i) => h('div', {
+                      key: i,
+                      style: { padding: '9px 0', borderTop: i ? '1px solid var(--bi-line)' : 'none' },
+                    },
+                      h('div', { 'data-bi-note': '', style: { marginBottom: 4 } },
+                        '对方（' + (x.to || '网友') + '）说：'),
+                      h('div', { style: { fontSize: 12.5, lineHeight: 1.7, opacity: .85, marginBottom: 6 } },
+                        String(x.their || '').slice(0, 200)),
+                      h('div', { 'data-bi-note': '', style: { marginBottom: 4, color: '#22d3ee' } }, '准备回：'),
+                      h('div', { style: { fontSize: 13.5, lineHeight: 1.8 } }, String(x.draft || '')))))
+            : null),
 
         /* ── ★ 学习：攒笔记，下次说话带上 ── */
         h('div', { 'data-bi-card': '' },

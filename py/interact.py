@@ -677,6 +677,8 @@ def interpret_comment_response(resp, text):
         hint = "参数不对（比如 oid/type 配错），多半是这条目标不是普通视频"
     elif code == -101:
         hint = "账号未登录或凭证失效，重新扫码登录"
+    elif code == 12014:
+        hint = "B站 限制了评论发送频率，这一轮先停，过几分钟再跑"
     elif code == 12015:
         hint = "需要先做一次验证码验证（去网页版评论区手动发一条）"
     return {
