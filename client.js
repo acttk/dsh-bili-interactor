@@ -195,10 +195,10 @@ window.__ModuleLoader__.load({
 
       /* ── 登录 ── */
       // 生成/复用二维码。后端幂等：还在有效期就返回同一张，不会作废手上那张。
-      const startLogin = async () => {
+      const startLogin = async (force) => {
         setBusy('login')
         try {
-          const j = await post('/login/qr')
+          const j = await post('/login/qr' + (force ? '?force=1' : ''))
           if (j && j.ok && j.image) {
             setLogin({
               img: j.image,
@@ -249,14 +249,22 @@ window.__ModuleLoader__.load({
             if (j.pending && j.image) {
               setLogin((s) => {
                 if (s.state === 'done') return s
+                let hint
+                if (j.expiredAfterScan) {
+                  // 明确告知：上一张已经作废，手机上的确认不会生效
+                  hint = '⚠️ 你刚扫的那张码过期了，手机上点「确认登录」不会生效。请扫下面这张新的。'
+                } else if (j.state === 'conf') {
+                  hint = '扫到了！现在去手机上点「确认登录」'
+                } else {
+                  hint = '扫完在手机上点「确认登录」。还剩 ' + j.leftSec + ' 秒。'
+                }
                 return {
                   img: j.image,
-                  state: j.state || 'scan',
+                  state: j.expiredAfterScan ? 'expired' : (j.state || 'scan'),
                   gen: j.gen || 0,
                   name: j.name || '',
-                  hint: j.state === 'conf'
-                    ? '扫到了！在手机上点「确认登录」'
-                    : '扫完在手机上点「确认登录」。还剩约 ' + j.leftSec + ' 秒，过期会自动换新。',
+                  leftSec: j.leftSec || 0,
+                  hint,
                 }
               })
             } else {
@@ -326,18 +334,39 @@ window.__ModuleLoader__.load({
 
         !loggedIn && login.img
           ? h('div', { style: { display: 'flex', gap: 18, alignItems: 'flex-start', flexWrap: 'wrap' } },
-              h('img', {
-                src: login.img, alt: '登录二维码', width: 176, height: 176,
-                style: { borderRadius: 10, background: '#fff', padding: 8, flex: '0 0 auto' },
-              }),
+              h('div', { style: { flex: '0 0 auto' } },
+                h('img', {
+                  src: login.img, alt: '登录二维码', width: 176, height: 176,
+                  style: { borderRadius: 10, background: '#fff', padding: 8, display: 'block' },
+                }),
+                // 倒计时：剩多少秒一眼能看到，别让人慢慢磨到过期
+                h('div', {
+                  'data-bi-note': '',
+                  style: {
+                    marginTop: 6, textAlign: 'center', fontSize: 11.5,
+                    color: login.state === 'conf' ? '#34d399'
+                      : (login.leftSec && login.leftSec < 45) ? '#fbbf24' : null,
+                  },
+                }, login.state === 'conf'
+                  ? '已扫，等你确认'
+                  : (login.leftSec ? '剩余 ' + login.leftSec + ' 秒' : ''))),
               h('div', { style: { flex: '1 1 220px', minWidth: 200 } },
-                h('div', { 'data-bi-note': '', style: { fontSize: 12.5, lineHeight: 1.8 } }, login.hint),
+                h('div', {
+                  'data-bi-note': '',
+                  style: {
+                    fontSize: 12.5, lineHeight: 1.8,
+                    color: login.state === 'expired' ? '#fbbf24' : null,
+                    fontWeight: login.state === 'expired' ? 600 : null,
+                  },
+                }, login.hint),
                 h('div', { 'data-bi-note': '', style: { marginTop: 10 } },
                   login.state === 'conf'
-                    ? '扫到了！现在去手机上点「确认登录」'
-                    : '打开 B站 手机 App → 右上角扫一扫 → 点「确认登录」'),
+                    ? '（手机上的「确认登录」点了就完成了）'
+                    : login.state === 'expired'
+                      ? '下面是新生成的一张，重新扫一次就行'
+                      : '打开 B站 手机 App → 右上角扫一扫 → 点「确认登录」'),
                 h('div', { style: { marginTop: 12 } },
-                  h('button', { 'data-bi-btn': '', 'data-variant': 'ghost', onClick: startLogin }, '换一张'))))
+                  h('button', { 'data-bi-btn': '', 'data-variant': 'ghost', disabled: busy === 'login', onClick: () => startLogin(true) }, busy === 'login' ? '正在换…' : '换一张'))))
           : null,
 
         !loggedIn && !login.img
@@ -345,7 +374,7 @@ window.__ModuleLoader__.load({
               h('div', { 'data-bi-note': '', style: { marginBottom: 12, fontSize: 12.5, lineHeight: 1.7 } },
                 '点赞、投币、评论都记在账号上，所以得先知道你用的是谁。点下面的按钮出二维码，用 B站 手机 App 扫一下、手机上点「确认登录」就行。凭证只存在这台电脑的 ~/.dsh/bili-interactor/ 里，不上传任何地方。'),
               h('button', {
-                'data-bi-btn': '', 'data-variant': 'primary', disabled: busy === 'login', onClick: startLogin,
+                'data-bi-btn': '', 'data-variant': 'primary', disabled: busy === 'login', onClick: () => startLogin(false),
               }, busy === 'login' ? '正在生成二维码…' : '扫码登录'),
               h('div', { 'data-bi-msg': '' }, login.hint))
           : null)
