@@ -67,9 +67,27 @@
 
 ## 环境要求
 
-- **DSH**（Desktop 版，带插件系统）
-- **Python 3.10+**
-- 一个 B站 账号（建议用小号）
+| 需要什么 | 必须吗 | 用途 | 大小 |
+|---|---|---|---|
+| **DSH**（Desktop 版，带插件系统） | 必须 | 宿主 | — |
+| **Python 3.10+** + `bilibili-api-python httpx qrcode pillow` | 必须 | 调 B站 接口、渲染登录二维码 | ~100MB |
+| 一个 B站 账号（建议小号） | 必须 | 干活的那个号 | — |
+| **DeepSeek API key** | 可选 | 有 key 才按人设说话；没有就退回内置模板 | — |
+| **本地转写环境**（Whisper） | 可选 | **没字幕的视频靠它读成文字** | 700MB~1.5GB |
+
+### 关于「它怎么知道视频在说什么」
+
+这是理解这个插件能力的关键，三层降级：
+
+| 层 | 手段 | 条件 |
+|---|---|---|
+| ① | B站 **字幕**接口 | 视频有字幕轨才拿得到。**实测大多数视频返回空** |
+| ② | **本地 Whisper 转写**（`py/asr.py`） | 需要装「转写环境」，一条视频 1~2 分钟 |
+| ③ | **弹幕池** | 永远可用。观众会把重点和坑打在屏幕上 |
+| ④ | 只有标题/简介 | 上面都没有时。过程实录里会写明「只有标题」 |
+
+**只有第 ② 层需要你额外装东西。** 不装也能用，但没字幕的视频就只能靠弹幕和标题猜——
+它不会假装看过，过程实录里会如实写。
 
 DeepSeek API key 是**可选**的：有 key 时评论/回复由模型按你的人设生成；没有 key 会退回内置模板，人设不生效（面板顶部会提示）。
 
@@ -90,6 +108,24 @@ bili-interactor/.venv/bin/pip install bilibili-api-python httpx qrcode pillow
 > 插件按这个顺序找解释器：配置项 `pythonPath` → `~/.dsh/bili-interactor/.venv`
 > → `~/.dsh/bili-duty/.venv`（和另一个插件共用的兼容路径） → `PATH` 上的 `python`。
 > 你已经有现成的环境就填 `pythonPath`，不用再建。
+
+### 可选：装本地转写（想让它真读懂视频就装）
+
+```bash
+# 在仓库根目录跑，会自动建 ~/.dsh/bili-interactor/.venv-asr 并预热模型
+# Windows:
+powershell -ExecutionPolicy Bypass -File scripts/setup-asr.ps1
+# macOS / Linux:
+bash scripts/setup-asr.sh
+
+# 想更准可以换模型（tiny / base / small / medium，默认 small）
+powershell -ExecutionPolicy Bypass -File scripts/setup-asr.ps1 medium
+```
+
+装完去设置里打开 **「没字幕就本地转写」**。
+
+> 模型走 `hf-mirror.com` 国内镜像，不用梯子。第一次跑会加载模型（几十秒），之后就是本地读。
+> 如果本机已经装了「刷B站」插件，它的转写环境会被自动复用，不用重复装。
 
 ```bash
 # 2. 装进 profile
@@ -149,6 +185,10 @@ pnpm add link:<本仓库路径>
 | 键 | 默认 | 说明 |
 |---|---|---|
 | `doLike` / `doCoin` / `doDanmaku` | `true` | 点赞 / 投币 / 发弹幕 |
+| `doDigest` | `true` | 先摘视频内容（字幕/弹幕）再说话，评论才不会只吐槽标题 |
+| `doTranscribe` | `false` | 没字幕时用本地 Whisper 转写（准但慢，一条 1~2 分钟，需装转写环境） |
+| `doWatch` | `false` | 上报观看进度。**这是在刷播放数据，默认关，容易被识别** |
+| `watchStyle` | `fast` | `fast` 几秒上报完；`real` 按真实节奏走完（更慢但更像真人） |
 | `doFavorite` / `favoriteId` | `false` / `0` | 收藏，需要填收藏夹 ID |
 | `doFollow` | `false` | 关注 UP（最容易被人发现，默认关） |
 | `coinPerVideo` | `1` | 每条投几个币 |
@@ -233,6 +273,9 @@ $PY py/interact.py act       --bvid BV1xxxxxxx --like --coin 1 --danmaku "这波
 $PY py/interact.py comment   --bvid BV1xxxxxxx --text "……"
 $PY py/interact.py sub-replies --bvid BV1xxxxxxx --rpid 123456
 $PY py/interact.py visible   --bvid BV1xxxxxxx --rpid 123456
+$PY py/interact.py digest    --bvid BV1xxxxxxx      # 摘视频内容（字幕/弹幕/简介）
+$PY py/interact.py transcribe --bvid BV1xxxxxxx     # 本地转写（慢，要装转写环境）
+$PY py/interact.py watch     --bvid BV1xxxxxxx      # 上报观看（会产生观看记录）
 ```
 
 登录走宿主（`lib/login.mjs`），凭证在 `Set-Cookie` 响应头里。
@@ -249,6 +292,7 @@ lib/danmaku.js   文案生成（有 key 用模型，否则模板）
 lib/learn.js     记忆的读写与淘汰
 lib/state.js     配置、账本、当日额度
 py/interact.py   执行层：只调 B站 接口，只干活不判断
+py/asr.py        本地转写（Whisper，把没字幕的视频读成文字）
 client.js        设置页面前端
 ```
 

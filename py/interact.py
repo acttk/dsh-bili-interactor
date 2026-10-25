@@ -741,22 +741,25 @@ async def cmd_comment(args):
 
 
 def _asr_paths():
-    """找转写环境。
+    """找转写环境：先看本插件自己的，再复用「刷B站」那份。
 
-    优先复用「刷B站」插件已经装好的那份（省得用户再下 1GB 模型），
-    其次看本插件自己的家目录。
+    公开发布后大多数用户没有「刷B站」，所以本插件必须能自带一套：
+        ~/.dsh/bili-interactor/.venv-asr  +  <repo>/py/asr.py
+    装法见 README 的「转写环境」，或者跑 scripts/setup-asr 脚本。
     """
     import os
     from pathlib import Path as _P
 
-    home = _P(os.environ.get("BILI_INTERACTOR_HOME") or (OWN_HOME))
-    dsh = home.parent
     is_win = os.name == "nt"
-    cands = []
-    for root in (dsh / "bili-duty", home):
-        py = root / (".venv-asr/Scripts/python.exe" if is_win else ".venv-asr/bin/python")
-        script = root / "asr.py"
-        cands.append((py, script))
+    venv_py = lambda root: root / (".venv-asr/Scripts/python.exe" if is_win else ".venv-asr/bin/python")
+
+    here = _P(__file__).resolve().parent          # <repo>/py
+    cands = [
+        # ① 自己的：家目录里的 venv + 仓库里的 asr.py
+        (venv_py(OWN_HOME), here / "asr.py"),
+        # ② 兼容：本机已装的「刷B站」
+        (venv_py(OWN_HOME.parent / "bili-duty"), OWN_HOME.parent / "bili-duty" / "asr.py"),
+    ]
     for py, script in cands:
         if py.exists() and script.exists():
             return py, script

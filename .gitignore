@@ -26,6 +26,13 @@ __pycache__/
 *.pyc
 .venv/
 
+# 本地转写（Whisper）：模型和音频都不该进仓库
+.venv-asr/
+.hf-cache/
+py/tmp/
+*.m4a
+*.webm
+
 # 临时脚本 / 截图
 tests/_p*.py
 tests/_dbg_*
