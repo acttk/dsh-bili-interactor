@@ -604,6 +604,23 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
             h('i', { style: { width: q.limit ? Math.min(100, ((t.actions || 0) / q.limit) * 100) + '%' : '0%' } })),
           h('div', { 'data-bi-note': '' },
             `今日额度 ${t.actions || 0} / ${q.limit || 0} · 上限到了就自动停，不会硬冲`),
+          // 额度用完时，直接给「去调高」—— 否则用户得自己翻到设置里找
+          !q.unlimited && (q.left || 0) <= 0
+            ? h('div', {
+                style: {
+                  marginTop: 10, padding: '8px 11px', borderRadius: 8,
+                  background: 'rgba(251,191,36,.12)', border: '1px solid rgba(251,191,36,.4)',
+                  display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap',
+                },
+              },
+                h('span', { 'data-bi-note': '', style: { flex: '1 1 200px', color: '#fbbf24' } },
+                  `今天的额度用完了（${t.actions || 0} / ${q.limit || 0}）。要接着跑就调高上限。`),
+                h('button', {
+                  'data-bi-btn': '', 'data-variant': 'primary',
+                  style: { padding: '4px 11px', fontSize: 12 },
+                  onClick: () => setTab('settings'),
+                }, '去调高上限'))
+            : null,
           h('div', { style: { marginTop: 13, display: 'flex', gap: 9 } },
             h('button', {
               'data-bi-btn': '', 'data-variant': 'primary', disabled: busy === 'run' || running,
