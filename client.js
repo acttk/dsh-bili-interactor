@@ -33,6 +33,32 @@ window.__ModuleLoader__.load({
     }
     // B站 支持在视频地址后加 #reply<rpid>，页面加载完会自动滚到那条评论并高亮。
 // 参考 Bilibili-Evolved #690 的说明。没有 rpid 就退回视频页。
+// 复制文本到剪贴板。B站 楼中楼嵌套深时锚点跳不到最里面那条，
+// 复制正文让用户自己在页面里 Ctrl+F 定位，是最实在的兜底。
+const copyText = async (text) => {
+  const t = String(text || '')
+  if (!t) return false
+  try {
+    if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(t)
+      return true
+    }
+  } catch { /* 落到下面 */ }
+  try {
+    if (typeof document === 'undefined') return false
+    const ta = document.createElement('textarea')
+    ta.value = t
+    ta.style.position = 'fixed'
+    ta.style.opacity = '0'
+    document.body.appendChild(ta)
+    ta.select()
+    let ok = false
+    try { ok = document.execCommand('copy') } catch { ok = false }
+    document.body.removeChild(ta)
+    return ok
+  } catch { return false }
+}
+
 const cmtUrl = (bvid, rpid) => {
   const base = 'https://www.bilibili.com/video/' + (bvid || '') + '/'
   return rpid ? base + '#reply' + String(rpid) : base
@@ -529,6 +555,17 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
                 }, isThread ? '跳到这一楼' : '跳到这条评论')
               : null
           })(),
+          // 楼中楼嵌套很深时，B站 的锚点只会带你到顶层，自动展开不了。
+          // 给一个复制按钮，粘到页面里 Ctrl+F 就能精确找到这句。
+          h('button', {
+            'data-bi-btn': '', 'data-variant': 'ghost',
+            style: { padding: '2px 8px', fontSize: 11.5, lineHeight: 1.6 },
+            title: '复制这句正文 —— 到页面里 Ctrl+F 粘进去就能定位到它',
+            onClick: async () => {
+              const okc = await copyText(r.text)
+              setMsg(okc ? '已复制正文，去视频页 Ctrl+F 粘贴就能找到这句' : '复制失败，手动选中正文复制吧')
+            },
+          }, '复制正文'),
           h('span', { 'data-bi-note': '', style: { flex: '1 1 auto' } },
             (r.toName ? '→ ' + r.toName + ' · ' : '') + localTime(r.ts))),
         h('div', { style: { fontSize: 13.5, lineHeight: 1.8, whiteSpace: 'pre-wrap', wordBreak: 'break-word' } },
@@ -542,7 +579,9 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
         h('div', { 'data-bi-card': '' },
           h('div', { 'data-bi-h2': '' }, '它说了什么（' + talkRows.length + ' 条）'),
           h('div', { 'data-bi-note': '', style: { marginBottom: 10 } },
-            '评论、回别人、回我、私信 —— 全部原文都在这。点 BVID 能跳过去看。'),
+            '评论、回别人、回我、私信 —— 全部原文都在这。' +
+            '「跳到这一楼」会落到那条顶层评论；如果回复嵌在楼中楼深处，' +
+            'B站 不会自动展开，这时点「复制正文」再在页面里 Ctrl+F 粘进去最准。'),
           talkRows.length === 0
             ? h('div', { 'data-bi-empty': '' }, '还没说过话')
             : talkRows.map(talkItem)))
