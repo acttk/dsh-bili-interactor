@@ -802,11 +802,13 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
           h('div', { 'data-bi-note': '', style: { marginTop: 4, marginBottom: 8, lineHeight: 1.7 } },
             '共 ' + actSum + ' 次动作，其中 ' + talkSum + ' 条是说过的话。按最近动过的排前面。'),
           h('div', { 'data-bi-note': '', style: { marginBottom: 10, lineHeight: 1.95 } },
-            '· ', h('b', null, '回评论'), ' = 视频下面的顶层评论里，挑值得接的主动回。' +
-            '我开的话头。只在跑一轮时做，每条视频最多「上面设的条数」。',
+            '· ', h('b', null, '评论'), ' = 我自己在视频下发的**新**评论（带 @ 你的那条）。话题是我开的。',
             h('br'),
-            '· ', h('b', null, '接着回'), ' = 别人先回了我发过的评论，我才回他。' +
-            '我只接话、不开新话头，由后台监听每分钟检查。'),
+            '· ', h('b', null, '回评论'), ' = 别人在视频下发了一条评论，我去接他的话。' +
+            '话题是**他**开的，我是插话的。只在跑一轮时做，每条视频最多「上面设的条数」。',
+            h('br'),
+            '· ', h('b', null, '接着回'), ' = 别人回的是**我发过的评论**，等于在跟我说话。' +
+            '这才算对话，由后台监听每分钟检查。'),
           videos.length
             ? h('div', { style: { display: 'flex', gap: 8, marginBottom: 6, flexWrap: 'wrap' } },
                 VIDEO_FILTER.map(([k, lab]) => h('button', {
