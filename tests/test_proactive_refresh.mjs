@@ -2,10 +2,11 @@
 // 用户屏幕上永远不会出现一张只剩几秒的死码。
 //
 // 用 BILI_QR_TTL_MS 把 180 秒缩短到 6 秒，几秒内就能验完。
+import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 import { rmSync, mkdirSync } from 'node:fs'
 
-const ROOT = 'C:\\Users\\user\\Desktop\\DSH\\dsh-bili-interactor'
+const ROOT = fileURLToPath(new URL('..', import.meta.url)).replace(/[\\/]+$/, '')
 const HOME = join(process.env.TEMP, 'bi-refresh')
 process.env.BILI_INTERACTOR_HOME = HOME
 process.env.DSH_HOME = join(process.env.TEMP, 'bi-refresh-dsh')

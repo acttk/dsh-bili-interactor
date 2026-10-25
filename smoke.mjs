@@ -3,7 +3,7 @@
 // 2) factory 返回 { inject:['slots'], apply }
 // 3) apply 会注册 settings.section / bili-interactor
 // 4) 首屏（无数据）和带数据两帧都能渲染，四个 tab 都在
-import { pathToFileURL } from 'node:url'
+import { pathToFileURL, fileURLToPath } from 'node:url'
 
 const registrations = []
 const effects = []
@@ -22,7 +22,7 @@ const baseReact = {
   useCallback: (fn) => fn,
 }
 
-const FILE = 'C:\\Users\\user\\Desktop\\DSH\\dsh-bili-interactor\\client.js'
+const FILE = fileURLToPath(new URL('./client.js', import.meta.url))
 await import(pathToFileURL(FILE).href)
 
 if (!loaded) throw new Error('没有调用 __ModuleLoader__.load')
@@ -56,8 +56,7 @@ console.log('OK  slot=' + r.opts.name + ' id=' + r.opts.id + ' order=' + r.opts.
 console.log('OK  effect=' + effects.join('|'))
 
 /* ── 带数据渲染：喂真实 buildState 的输出 ── */
-const { buildState } = await import(pathToFileURL(
-  'C:\\Users\\user\\Desktop\\DSH\\dsh-bili-interactor\\lib\\state.js').href)
+const { buildState } = await import(new URL('./lib/state.js', import.meta.url).href)
 
 const home = process.env.USERPROFILE + '\\.dsh\\bili-interactor'
 const state = buildState(home, { version: '0.1.0' })

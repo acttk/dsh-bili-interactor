@@ -1,8 +1,9 @@
 // 验证这次三件事：@ 只出现一次、学习记忆的存取、监听过滤逻辑。
+import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 import { rmSync, mkdirSync, existsSync, writeFileSync } from 'node:fs'
 
-const ROOT = 'C:\\Users\\user\\Desktop\\DSH\\dsh-bili-interactor'
+const ROOT = fileURLToPath(new URL('..', import.meta.url)).replace(/[\\/]+$/, '')
 const HOME = join(process.env.TEMP, 'bi-learn-test')
 try { rmSync(HOME, { recursive: true, force: true }) } catch {}
 mkdirSync(HOME, { recursive: true })

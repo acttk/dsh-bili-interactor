@@ -3,10 +3,11 @@
 // 期望：界面必须明确告诉他「你刚扫的那张废了，重新扫」，而不是悄悄换一张新的。
 //
 // 登录已改为 Node 实现（lib/login.mjs），用 globalThis.__BILI_LOGIN_STUB__ 打桩。
+import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 import { rmSync, mkdirSync } from 'node:fs'
 
-const ROOT = 'C:\\Users\\user\\Desktop\\DSH\\dsh-bili-interactor'
+const ROOT = fileURLToPath(new URL('..', import.meta.url)).replace(/[\\/]+$/, '')
 const HOME = join(process.env.TEMP, 'bi-seq')
 process.env.BILI_INTERACTOR_HOME = HOME
 process.env.DSH_HOME = join(process.env.TEMP, 'bi-seq-dsh')

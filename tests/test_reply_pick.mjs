@@ -1,7 +1,8 @@
 // 验证「挑值得接话的」：纯复读/纯情绪/广告不能被选中
+import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 
-const ROOT = 'C:\\Users\\user\\Desktop\\DSH\\dsh-bili-interactor'
+const ROOT = fileURLToPath(new URL('..', import.meta.url)).replace(/[\\/]+$/, '')
 
 let ok = 0, bad = 0
 const check = (n, c, extra = '') => {

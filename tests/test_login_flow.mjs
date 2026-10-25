@@ -3,10 +3,11 @@
 // 登录现在走 Node（lib/login.mjs），凭证从 **Set-Cookie** 里取。
 // 这里用 globalThis.__BILI_LOGIN_STUB__ 打桩：不碰网络、不碰真实凭证、
 // 也不去改动 py/interact.py（上一版改它，结果把假凭证写进了真实目录）。
+import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 import { rmSync, existsSync, readFileSync, mkdirSync } from 'node:fs'
 
-const ROOT = 'C:\\Users\\user\\Desktop\\DSH\\dsh-bili-interactor'
+const ROOT = fileURLToPath(new URL('..', import.meta.url)).replace(/[\\/]+$/, '')
 const HOME = join(process.env.TEMP, 'bi-integ')
 process.env.BILI_INTERACTOR_HOME = HOME
 process.env.DSH_HOME = join(process.env.TEMP, 'bi-integ-dsh')

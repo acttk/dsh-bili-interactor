@@ -3,9 +3,10 @@
 // 以前的实现从 data.url 里 parse_qs 找 SESSDATA —— B站 成功时那条 url
 // 根本没有 SESSDATA（那是别的域的游戏票），于是永远拿到空凭证：
 // 手机上明明确认成功，插件这边永远不算登录。
+import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 
-const ROOT = 'C:\\Users\\user\\Desktop\\DSH\\dsh-bili-interactor'
+const ROOT = fileURLToPath(new URL('..', import.meta.url)).replace(/[\\/]+$/, '')
 
 let ok = 0, bad = 0
 const check = (n, c, extra = '') => {

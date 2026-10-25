@@ -28,7 +28,7 @@ const ctx = {
   },
 }
 
-const mod = await import('file:///C:/Users/user/Desktop/DSH/dsh-bili-interactor/lib/index.js')
+const mod = await import(new URL('./lib/index.js', import.meta.url).href)
 if (!mod.apply) throw new Error('没有 export apply')
 if (mod.name !== 'bili-interactor') throw new Error('name 不对：' + mod.name)
 if (!Array.isArray(mod.inject) || !mod.inject.includes('webServer')) throw new Error('inject 不对')

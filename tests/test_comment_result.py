@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """评论结果判定的单元测试。
 
 锁死这次的 bug：`comment.send_comment` 返回 `.result`（data 本体，没有 code），

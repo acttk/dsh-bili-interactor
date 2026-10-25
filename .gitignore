@@ -4,19 +4,33 @@ node_modules/
 .env
 *.local
 
-# 插件运行时产物（不该进仓库）
-ledger.jsonl
+# ── 运行时产物：绝不该进仓库 ──
+# 登录凭证（含 SESSDATA，等于你的登录态）
+credential.json
+bili_credential.json
+# 登录过程中的二维码快照（含 qrcode_key 和图片）
+login.json
+qr.png
+# 个人配置与活动记录
+config.json
 daily.json
+ledger.jsonl
+replied.json
+visibility.json
+learned.jsonl
 live.md
 interact.log
-bili_credential.json
 
 # Python
 __pycache__/
 *.pyc
+.venv/
 
-# 临时脚本 / 截图（别进仓库）
+# 临时脚本 / 截图
 tests/_p*.py
 tests/_dbg_*
 tests/verify_*
+tests/_scan_*
+tests/_sanitize*
 topbar*.png
+*.bak-*

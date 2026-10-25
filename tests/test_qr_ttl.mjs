@@ -1,9 +1,10 @@
 // 验证二维码「时间预算」逻辑：绝不把一张快过期的码递给用户。
 // 用伪造的 login.json 快照来模拟不同年龄的码，不需要真的等 3 分钟。
+import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 import { rmSync, existsSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs'
 
-const ROOT = 'C:\\Users\\user\\Desktop\\DSH\\dsh-bili-interactor'
+const ROOT = fileURLToPath(new URL('..', import.meta.url)).replace(/[\\/]+$/, '')
 process.env.BILI_INTERACTOR_HOME = join(process.env.TEMP, 'bi-ttl')
 process.env.DSH_HOME = join(process.env.TEMP, 'bi-ttl-dsh')
 process.env.BILI_INTERACTOR_SCRIPT = join(ROOT, 'tests', '_stub_interact.py')
