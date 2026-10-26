@@ -175,6 +175,8 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
       const [setup, setSetup] = React.useState(null)
       // 点完「跑一轮」后的本地锁：接口返回前先把按钮锁住，避免连点
       const [runLock, setRunLock] = React.useState(false)
+      // 保存状态：'idle' | 'saving' | 'saved' | 'error'
+      const [saveState, setSaveState] = React.useState({ kind: 'idle', at: 0, note: '', error: '' })
       // 「碰过的视频」的筛选：全部 / 我说过话的
       const [videoFilter, setVideoFilter] = React.useState('all')
       const [err, setErr] = React.useState('')
@@ -403,12 +405,18 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
       const patch = async (kv, note) => {
         // 本地先改，界面立刻反应；再落盘
         setSt((s) => (s ? { ...s, config: { ...s.config, ...kv } } : s))
+        setSaveState({ kind: 'saving', at: Date.now(), note: note || '', error: '' })
         try {
           const j = await post('/config', kv)
-          if (!j || !j.ok) setMsg('保存失败')
-          else setMsg(note ? note + ' 已保存' : '已保存')
+          if (!j || !j.ok) {
+            const why = (j && j.error) || '接口没返回 ok'
+            setSaveState({ kind: 'error', at: Date.now(), note: note || '', error: why })
+          } else {
+            setSaveState({ kind: 'saved', at: Date.now(), note: note || '', error: '' })
+            if (note) setMsg(note + ' 已保存，立即生效')
+          }
         } catch (e) {
-          setMsg('保存失败：' + e)
+          setSaveState({ kind: 'error', at: Date.now(), note: note || '', error: String(e) })
         }
       }
 
@@ -514,6 +522,48 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
       /* ── 总览 ── */
       const overview = h('div', null,
         // 自检：新用户最常卡在「忘了 pip install」，这里直接给能复制的命令
+        // ── 可见性：发出去 ≠ 别人看得到 ──
+        (() => {
+          const vs = st.visStats
+          if (!vs || !vs.checked) return null
+          const bad = vs.hidden > 0
+          return h('div', {
+            'data-bi-card': '',
+            style: bad ? { borderColor: 'rgba(248,113,113,.5)' } : null,
+          },
+            h('div', { 'data-bi-h2': '', style: bad ? { color: '#f87171' } : null },
+              bad ? '⚠️ 有 ' + vs.hidden + ' 条别人看不到' : '✓ 发出去的评论都是公开的'),
+            h('div', { 'data-bi-note': '', style: { lineHeight: 1.8 } },
+              bad
+                ? '查了 ' + vs.checked + ' 条，其中 **' + vs.hidden + ' 条只有你自己能看到**' +
+                  (vs.selfOnly ? '（' + vs.selfOnly + ' 条是「审核中或被折叠」）' : '') +
+                  '。B站 收了（返回成功）不代表别人刷得到 —— 这通常是发得太密或新号被限流。'
+                : '查了 ' + vs.checked + ' 条，全部公开可见。'),
+            bad
+              ? h('div', { 'data-bi-note': '', style: { marginTop: 6, lineHeight: 1.8, color: '#fbbf24' } },
+                  '建议：把「每条视频最多回几条」降到 3~5，间隔拉长，停一两天再刷。')
+              : null,
+            h('div', { style: { marginTop: 8 } },
+              h('button', {
+                'data-bi-btn': '', 'data-variant': 'ghost',
+                style: { padding: '4px 11px', fontSize: 12 },
+                disabled: busy === 'vis',
+                onClick: async () => {
+                  setBusy('vis')
+                  setMsg('正在查最近 10 条…')
+                  try {
+                    const j = await post('/visibility/check', { limit: 10 })
+                    if (j && j.ok) {
+                      setVis(j.map || {})
+                      setMsg('查了 ' + j.checked + ' 条：' + j.hidden + ' 条别人看不到')
+                      await load()
+                    } else setMsg('检查失败')
+                  } catch (e) { setMsg('检查失败：' + e) }
+                  finally { setBusy('') }
+                },
+              }, busy === 'vis' ? '检查中…' : '重新检查')))
+        })(),
+
         // ── 环境状态：全绿时只占一行，别摆一张检查表让人数 ──
         (() => {
           const env = doctorView
@@ -1249,6 +1299,42 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
                         String(x.their || '').slice(0, 200)),
                       h('div', { 'data-bi-note': '', style: { marginBottom: 4, color: '#22d3ee' } }, '准备回：'),
                       h('div', { style: { fontSize: 13.5, lineHeight: 1.8 } }, String(x.draft || '')))))
+            : null),
+
+        /* ── ★ 保存状态：让「存没存」一眼可见 ── */
+        h('div', {
+          'data-bi-card': '',
+          style: {
+            display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+            padding: '10px 14px',
+            borderColor: saveState.kind === 'error' ? 'rgba(248,113,113,.55)'
+              : saveState.kind === 'saved' ? 'rgba(74,222,128,.4)' : null,
+          },
+        },
+          h('span', {
+            style: {
+              flex: '0 0 auto', fontWeight: 700,
+              color: saveState.kind === 'error' ? '#f87171'
+                : saveState.kind === 'saved' ? '#4ade80' : 'var(--bi-dim)',
+            },
+          },
+            saveState.kind === 'saving' ? '⏳ 保存中…'
+              : saveState.kind === 'saved' ? '✅ 已保存'
+                : saveState.kind === 'error' ? '❌ 保存失败' : '· 未改动'),
+          h('span', { 'data-bi-note': '', style: { flex: '1 1 220px', lineHeight: 1.7 } },
+            saveState.kind === 'error'
+              ? '原因：' + saveState.error + '（改一下再试试）'
+              : (saveState.kind === 'saved' && saveState.note
+                ? saveState.note + ' · 已经生效，不用重启'
+                : '这里改任何一项都是**立刻保存、立刻生效**的，不需要重启 DSH。')),
+
+          // 原文没保存成功时给个一键重试
+          saveState.kind === 'error'
+            ? h('button', {
+                'data-bi-btn': '', 'data-variant': 'ghost',
+                style: { padding: '4px 11px', fontSize: 12 },
+                onClick: () => { setSaveState({ kind: 'idle', at: 0, note: '', error: '' }); load() },
+              }, '重新读取')
             : null),
 
         /* ── ★ 学习：攒笔记，下次说话带上 ── */
