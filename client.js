@@ -173,6 +173,8 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
       const [showEnvDetail, setShowEnvDetail] = React.useState(false)
       // 一键装依赖的进度（宿主那边边装边报）
       const [setup, setSetup] = React.useState(null)
+      // 点完「跑一轮」后的本地锁：接口返回前先把按钮锁住，避免连点
+      const [runLock, setRunLock] = React.useState(false)
       // 「碰过的视频」的筛选：全部 / 我说过话的
       const [videoFilter, setVideoFilter] = React.useState('all')
       const [err, setErr] = React.useState('')
@@ -281,17 +283,26 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
 
       const onRun = async () => {
         setBusy('run')
-        setMsg('正在开工…')
+        setMsg('正在提交…')
+        // 乐观锁：点下去就锁住按钮，避免用户狂点
+        setRunLock(true)
         try {
           const j = await post('/run')
-          if (j && j.started) setMsg('跑起来了 —— 切到「过程」看它在干什么')
-          else if (j && j.busy) setMsg('上一轮还没跑完')
-          else setMsg('没跑起来：' + ((j && j.error) || '未知原因'))
+          if (j && j.started) {
+            setMsg('跑起来了 —— 切到「过程」看它在干什么')
+          } else if (j && j.busy) {
+            // 把真实原因显示出来（以前只说「上一轮还没跑完」，而实际常是监听在跑）
+            setMsg(j.error || '上一轮还没跑完')
+          } else {
+            setMsg('没跑起来：' + ((j && j.error) || '未知原因'))
+          }
         } catch (e) {
           setMsg('请求失败：' + e)
         } finally {
           setBusy('')
-          setTimeout(load, 500)
+          // 立刻拉一次真实状态，别等 2 秒轮询（用户会以为没反应）
+          try { await load() } catch { /* ignore */ }
+          setTimeout(() => setRunLock(false), 800)
         }
       }
 
@@ -629,7 +640,7 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
             : null,
           h('div', { style: { marginTop: 13, display: 'flex', gap: 9 } },
             h('button', {
-              'data-bi-btn': '', 'data-variant': 'primary', disabled: busy === 'run' || running,
+              'data-bi-btn': '', 'data-variant': 'primary', disabled: busy === 'run' || runLock || running,
               onClick: onRun,
             }, running ? '正在跑…' : '现在跑一轮'),
             running ? h('button', {
