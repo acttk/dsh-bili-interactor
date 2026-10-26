@@ -1405,6 +1405,40 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
 
         h('div', { 'data-bi-card': '' },
           h('div', { 'data-bi-h2': '' }, '找什么视频'),
+
+          // 跳过刷过的：开着就不会反复刷同一批视频
+          h('div', { 'data-bi-row': '' },
+            h('div', { style: { flex: '1 1 auto' } },
+              h('div', { 'data-bi-lab': '' }, '跳过刷过的视频'),
+              h('div', { 'data-bi-note': '', style: { lineHeight: 1.75 } },
+                cfg.skipSeenVideos !== false
+                  ? '开着 —— 刷过的不再刷（已记录 ' + (st.seenCount || 0) + ' 条）'
+                  : '关着 —— 每次搜到的热门还是那几条，会重复刷到')),
+            h(Switch, {
+              on: cfg.skipSeenVideos !== false,
+              onChange: (v) => patch({ skipSeenVideos: v }, '跳过刷过的'),
+            })),
+          (st.seenCount || 0) > 0
+            ? h('div', { 'data-bi-row': '' },
+                h('div', null,
+                  h('div', { 'data-bi-lab': '' }, '清空已刷记录'),
+                  h('div', { 'data-bi-note': '' }, '清掉之后那些视频又会被刷到')),
+                h('button', {
+                  'data-bi-btn': '', 'data-variant': 'ghost',
+                  style: { padding: '4px 11px', fontSize: 12 },
+                  disabled: busy === 'seenClear',
+                  onClick: async () => {
+                    setBusy('seenClear')
+                    try {
+                      const j = await post('/seen/clear', {})
+                      if (j && j.ok) { setMsg('已清空，之后会重新刷到它们'); load() }
+                      else setMsg('清空失败')
+                    } catch (e) { setMsg('清空失败：' + e) }
+                    finally { setBusy('') }
+                  },
+                }, busy === 'seenClear' ? '清空中…' : '清空'))
+              : null,
+
           h('div', { 'data-bi-note': '', style: { marginBottom: 8 } }, '关键词用逗号分隔'),
           h('input', {
             'data-bi-input': '', style: { width: '100%' }, defaultValue: (cfg.keywords || []).join('，'),
