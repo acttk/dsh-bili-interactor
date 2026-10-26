@@ -535,7 +535,7 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
               bad ? '⚠️ 有 ' + vs.hidden + ' 条别人看不到' : '✓ 发出去的评论都是公开的'),
             h('div', { 'data-bi-note': '', style: { lineHeight: 1.8 } },
               bad
-                ? '查了 ' + vs.checked + ' 条，其中 **' + vs.hidden + ' 条只有你自己能看到**' +
+                ? '查了 ' + vs.checked + ' 条，其中 ' + vs.hidden + ' 条只有你自己能看到' +
                   (vs.selfOnly ? '（' + vs.selfOnly + ' 条是「审核中或被折叠」）' : '') +
                   '。B站 收了（返回成功）不代表别人刷得到 —— 这通常是发得太密或新号被限流。'
                 : '查了 ' + vs.checked + ' 条，全部公开可见。'),
@@ -1125,12 +1125,20 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
               },
             })),
           h('div', { 'data-bi-row': '' },
-            h('div', null,
-              h('div', { 'data-bi-lab': '' }, '每条视频最多回几条'),
-              h('div', { 'data-bi-note': '' }, '0 = 只发顶层评论，不回别人。B站 有评论频率上限（12014），一次别设太大')),
+            h('div', { style: { flex: '1 1 auto' } },
+              h('div', { 'data-bi-lab': '' }, '每条视频最多跟几个人搭话'),
+              h('div', { 'data-bi-note': '', style: { lineHeight: 1.85 } },
+                '是人数，不是句数。打开一条视频 → 拉前 20 条评论 → 让模型挑值得接话的 → 最多挑这么多个人，一人回一句。',
+                h('br'),
+                '0 = 只发自己那条顶层评论，不去接别人的话。',
+                h('br'),
+                `按你现在「每轮刷 ${cfg.maxVideosPerRun || 5} 条视频」估算，一轮最多回 ${(Number(cfg.maxVideosPerRun) || 5) * (Number(cfg.replyCount) || 0)} 条` +
+                `（实际还会被「一轮最多动几次」拦住）。`,
+                h('br'),
+                '⚠️ B站 有评论频率上限（12014），设太大容易撞；账号还可能被折叠 —— 3~5 比较稳。')),
             h('input', {
               'data-bi-input': '', type: 'number', min: 0, max: 20, defaultValue: cfg.replyCount,
-              onBlur: (e) => patch({ replyCount: Math.max(0, Math.min(20, Number(e.target.value) || 0)) }, '回复条数'),
+              onBlur: (e) => patch({ replyCount: Math.max(0, Math.min(20, Number(e.target.value) || 0)) }, '搭话人数'),
             }))),
 
         /* ── ★ 别人回了我 → 我去回他（后台监听）── */
@@ -1326,7 +1334,7 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
               ? '原因：' + saveState.error + '（改一下再试试）'
               : (saveState.kind === 'saved' && saveState.note
                 ? saveState.note + ' · 已经生效，不用重启'
-                : '这里改任何一项都是**立刻保存、立刻生效**的，不需要重启 DSH。')),
+                : '这里改任何一项都是立刻保存、立刻生效的，不需要重启 DSH。')),
 
           // 原文没保存成功时给个一键重试
           saveState.kind === 'error'
@@ -1443,9 +1451,26 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
           h('div', { 'data-bi-h2': '' }, '额度和节奏'),
           h('div', { 'data-bi-note': '', style: { marginBottom: 10, lineHeight: 1.8 } },
             '三个数字别搞混：', h('br'),
-            '· 「每轮刷几条视频」= 跑一次看几条视频（你真正想调的那个）', h('br'),
-            '· 「一轮最多动几次」= 一次最多做多少个动作（点赞/投币/弹幕/评论/回复都算），是护栏', h('br'),
-            '· 「一天最多动几次」= 全天累计的动作上限，跟视频条数无关'),
+            '· 「每轮刷几条视频」= 跑一次看几条视频', h('br'),
+            '· 「一轮最多动几次」= 一次最多做多少个动作（点赞/投币/弹幕/评论/回复全算），是护栏', h('br'),
+            '· 「一天最多动几次」= 全天累计的动作上限，跟视频条数无关', h('br'),
+            h('br'),
+            '举个例子（按你现在每轮刷 ', String(cfg.maxVideosPerRun || 5), ' 条、每条跟 ',
+              String(cfg.replyCount || 0), ' 个人搭话）：', h('br'),
+            '一条视频大约 = 1 次点赞 + 1 条评论 + ', String(cfg.replyCount || 0), ' 条回复，',
+            '一轮 ' + String(cfg.maxVideosPerRun || 5) + ' 条视频就是 ',
+            String((Number(cfg.replyCount) || 0) + 2), ' × ', String(cfg.maxVideosPerRun || 5), ' ≈ ',
+            String(((Number(cfg.replyCount) || 0) + 2) * (Number(cfg.maxVideosPerRun) || 5)),
+            (() => {
+              const perVideo = (Number(cfg.replyCount) || 0) + 2
+              const total = perVideo * (Number(cfg.maxVideosPerRun) || 5)
+              const cap = Number(cfg.maxActionsPerRun) || 0
+              const over = cap > 0 && total > cap
+              return h('span', { style: { color: over ? '#fbbf24' : null } },
+                ' 个动作' + (over
+                  ? ' —— 但「一轮最多动几次」只有 ' + cap + '，实际跑到 ' + cap + ' 就停，「每轮刷几条视频」根本没轮完'
+                  : ' —— 在「一轮最多动几次」之内'))
+            })()),
           h('div', { 'data-bi-row': '' },
             h('div', null,
               h('div', { 'data-bi-lab': '' }, '每轮刷几条视频'),
