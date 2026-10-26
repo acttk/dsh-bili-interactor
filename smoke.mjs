@@ -4,6 +4,7 @@
 // 3) apply 会注册 settings.section / bili-interactor
 // 4) 首屏（无数据）和带数据两帧都能渲染，四个 tab 都在
 import { pathToFileURL, fileURLToPath } from 'node:url'
+import { join } from 'node:path'
 
 const registrations = []
 const effects = []
@@ -55,10 +56,37 @@ console.log('OK  id=' + loaded.id)
 console.log('OK  slot=' + r.opts.name + ' id=' + r.opts.id + ' order=' + r.opts.order + ' label=' + r.opts.label)
 console.log('OK  effect=' + effects.join('|'))
 
-/* ── 带数据渲染：喂真实 buildState 的输出 ── */
+/* ── 带数据渲染：在临时目录造一份固定假数据 ──
+ * ⚠️ 以前这里是读用户的真实 ~/.dsh/bili-interactor。
+ *    结果到了第二天（今天还没刷过）today.videos = 0，
+ *    「碰过的视频」页签的筛选按钮不渲染，smoke 就挂了 —— 代码明明是好的。
+ *    测试不该依赖「用户今天刷没刷」，所以自己造数据。
+ */
 const { buildState } = await import(new URL('./lib/state.js', import.meta.url).href)
+const { mkdirSync, rmSync, writeFileSync } = await import('node:fs')
+const { tmpdir } = await import('node:os')
 
-const home = process.env.USERPROFILE + '\\.dsh\\bili-interactor'
+const home = join(tmpdir(), 'bi-smoke-fixture')
+rmSync(home, { recursive: true, force: true })
+mkdirSync(home, { recursive: true })
+
+const { localIso } = await import(new URL('./lib/state.js', import.meta.url).href)
+const nowIso = localIso()   // 必须是本地时间，跟 dayKey 对齐
+const mk = (o) => JSON.stringify({ ts: nowIso, ...o })
+writeFileSync(join(home, 'ledger.jsonl'), [
+  mk({ kind: 'like', ok: true, bvid: 'BV1smokeA', title: '演示视频甲', up: '演示UP' }),
+  mk({ kind: 'danmaku', ok: true, bvid: 'BV1smokeA', title: '演示视频甲', up: '演示UP', text: '这鱼成精了' }),
+  mk({ kind: 'comment', ok: true, bvid: 'BV1smokeA', title: '演示视频甲', up: '演示UP', text: '@示例用户 演示评论正文', rpid: '1001' }),
+  mk({ kind: 'reply', ok: true, bvid: 'BV1smokeA', title: '演示视频甲', up: '演示UP', text: '回别人一句', rpid: '1002', root: '1000', toName: '路人甲' }),
+  mk({ kind: 'like', ok: true, bvid: 'BV1smokeB', title: '演示视频乙', up: '演示UP2' }),
+  mk({ kind: 'comment', ok: false, bvid: 'BV1smokeB', title: '演示视频乙', up: '演示UP2', text: '没发出去的那条', code: 12014, error: '发送失败' }),
+].join('\n') + '\n', 'utf8')
+
+writeFileSync(join(home, 'learned.jsonl'), [
+  JSON.stringify({ at: nowIso, kind: 'rule', text: '先给反应再给理由', rule: '先给反应再给理由', why: '真人先笑后解释', score: 9 }),
+  JSON.stringify({ at: nowIso, kind: 'quote', text: '这是一条例句', why: '感受语感', score: 7 }),
+].join('\n') + '\n', 'utf8')
+
 const state = buildState(home, { version: '0.1.0' })
 state.run = { running: false, phase: '', progress: { index: 0, total: 0 }, error: '', startedAt: 0 }
 
@@ -237,7 +265,7 @@ if (t2.some((x) => x.includes('扫码登录'))) throw new Error('已登录却还
   if (!memTab) throw new Error('找不到「记忆」页签')
   memTab.props.onClick()
   const memText = collect(render())
-  if (!memText.some((x) => x.includes('它记住的东西'))) throw new Error('「记忆」页签内容没出来')
+  if (!memText.some((x) => x.includes('它学到的说话规律'))) throw new Error('「记忆」页签内容没出来')
   console.log('OK  「记忆」页签能渲染（' + memText.length + ' 个节点）')
 
   // 回总览
@@ -279,6 +307,9 @@ if (!texts.some((x) => x.includes('环境就绪') || x.includes('环境还没好
 console.log('OK  带数据渲染通过：' + texts.length + ' 个文本节点')
 console.log('OK  quota=' + JSON.stringify(state.quota))
 console.log('OK  live 行数=' + state.live.lines.length + ' / ledger 条数=' + state.recent.length)
+
+// 清掉临时数据
+try { rmSync(home, { recursive: true, force: true }) } catch { /* ignore */ }
 
 // 组件里的 setInterval 会让进程赖着不退，测完直接收工
 process.exit(0)

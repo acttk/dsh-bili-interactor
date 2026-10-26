@@ -810,6 +810,10 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
               style: { color: sc >= 8 ? '#4ade80' : sc >= 6 ? '#fbbf24' : 'var(--bi-dim)' },
             }, '分 ' + sc),
             inUse ? h('span', { 'data-bi-chip': '', style: { color: '#22d3ee' } }, '在用') : null,
+            h('span', {
+              'data-bi-chip': '',
+              style: { color: e.kind === 'rule' ? '#4ade80' : 'var(--bi-dim)' },
+            }, e.kind === 'rule' ? '规律' : '例句'),
             e.from ? h('span', { 'data-bi-note': '' }, '来自 ' + e.from) : null,
             h('span', { 'data-bi-note': '', style: { flex: '1 1 auto' } }, localTime(e.at)),
             h('button', {
@@ -822,8 +826,13 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
                 } catch { setMsg('删失败') }
               },
             }, '删掉')),
-          h('div', { style: { fontSize: 13.5, lineHeight: 1.8, wordBreak: 'break-word' } }, e.text),
-          e.why ? h('div', { 'data-bi-note': '', style: { marginTop: 4, color: '#a78bfa' } }, '好在哪：' + e.why) : null,
+          h('div', { style: { fontSize: 13.5, lineHeight: 1.8, wordBreak: 'break-word' } },
+            (e.kind === 'rule' ? e.rule || e.text : e.text)),
+          e.kind !== 'rule'
+            ? h('div', { 'data-bi-note': '', style: { marginTop: 4 } }, '（例句，只用来感受语感，不许照抄）')
+            : null,
+          e.why ? h('div', { 'data-bi-note': '', style: { marginTop: 4, color: '#a78bfa' } },
+            (e.kind === 'rule' ? '为什么更像真人：' : '好在哪：') + e.why) : null,
           e.bvid ? h('div', { 'data-bi-note': '', style: { marginTop: 4, opacity: .8, display: 'flex', gap: 10 } },
             h('a', {
               'data-bi-bv': '', href: 'https://www.bilibili.com/video/' + e.bvid + '/',
@@ -838,10 +847,11 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
 
       const memory = h('div', null,
         h('div', { 'data-bi-card': '' },
-          h('div', { 'data-bi-h2': '' }, '它记住的东西（' + (memoSrc.items || []).length + ' / ' + (memoSrc.total || 0) + '）'),
+          h('div', { 'data-bi-h2': '' }, '它学到的说话规律（' + (memoSrc.items || []).length + ' / ' + (memoSrc.total || 0) + '）'),
           h('div', { 'data-bi-note': '', style: { marginBottom: 10, lineHeight: 1.7 } },
-            '刷视频时从评论区挑出来的、以及别人跟它说的话里值得记的。' +
-            '标了「在用」的，是下次写评论/回别人时会真的带进提示词的。'),
+            '它记的不是「别人说过的话」，而是「怎么说话才不像 AI」—— ' +
+            '从真人评论和对话里提炼可执行的规律。标了「在用」的，是下次写评论时会真的带进提示词的；' +
+            '标了「例句」的只用来感受语感，明确禁止照抄。'),
           h('div', { style: { marginBottom: 10 } },
             h('button', {
               'data-bi-btn': '', 'data-variant': 'ghost', onClick: () => loadMemo(),

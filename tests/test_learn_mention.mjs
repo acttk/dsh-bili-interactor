@@ -41,11 +41,13 @@ check('挑 2 条', picked.length === 2, picked.length)
 check('高分优先', picked[0].score === 9, picked[0].score)
 check('pickLearned(0) 返回空', L.pickLearned(HOME, 0).length === 0)
 
-// 去重：同一条文本不重复挑
-L.addLearned(HOME, { text: '推荐系统把人锁在信息茧房里', why: '重复', score: 10 })
-const picked2 = L.pickLearned(HOME, 5)
-const texts = picked2.map((x) => String(x.text).slice(0, 20))
-check('同文本只挑一次', new Set(texts).size === texts.length, texts.join('|'))
+// 去重只对「规律」生效（规律要合并加固），例句允许重复（它只是语感样本）
+const rulesBefore = L.readLearned(HOME).filter((e) => e.kind === 'rule').length
+L.addLearned(HOME, { kind: 'rule', text: '先给反应再给理由', score: 8 })
+L.addLearned(HOME, { kind: 'rule', text: '先给反应再给理由', score: 8 })
+const rulesAfter = L.readLearned(HOME).filter((e) => e.kind === 'rule')
+check('同一条规律不重复存', rulesAfter.length === rulesBefore + 1, rulesBefore + ' -> ' + rulesAfter.length)
+check('重复的规律会加分', rulesAfter.find((e) => e.text.includes('先给反应'))?.score === 9)
 
 // 淘汰
 for (let i = 0; i < 30; i++) L.addLearned(HOME, { text: '批量 ' + i, score: i % 10 })
