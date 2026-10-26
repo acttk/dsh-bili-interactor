@@ -360,11 +360,31 @@ async def cmd_search(args):
         "dm": search.OrderVideo.DM,
     }
     order = order_map.get(args.order or "click", search.OrderVideo.CLICK)
+    # ⚠️ 别用 time_range —— 它筛的是「视频时长」，不是「发布时间」！
+    #    bilibili_api 里 time_range 会变成 params["duration"]，
+    #    表示「时长超过 N 分钟」，跟新鲜度毫无关系（踩过这个坑）。
+    #
+    #    真正的发布时间筛选是 time_start / time_end（YYYY-MM-DD）。
+    #    实测（LPL比赛，42 条）：
+    #      1 天内 + 按播放   最低播放 5178    ← 新鲜又有量
+    #      7 天内 + 按播放   最低播放 37477   ← 最佳
+    #      按最新（无时间窗）最低播放 12      ← 全是刚发的垃圾
+    #      按播放（无时间窗）最低播放 133 万  ← 但都是 5 年前的
+    days = int(getattr(args, "days", 0) or 0)
+    time_start = time_end = None
+    if days > 0:
+        from datetime import datetime as _dt, timedelta as _td
+        now = _dt.now()
+        time_start = (now - _td(days=days)).strftime("%Y-%m-%d")
+        time_end = now.strftime("%Y-%m-%d")
+
     try:
         res = await search.search_by_type(
             keyword=args.keyword,
             search_type=search.SearchObjectType.VIDEO,
             order_type=order,
+            time_start=time_start,
+            time_end=time_end,
             page=1,
         )
     except Exception as e:
@@ -1344,6 +1364,8 @@ def build_parser():
     sub.add_parser("logout")         # 删掉本插件的凭证
 
     s = sub.add_parser("search")
+    s.add_argument("--days", type=int, default=0,
+                   help="只看最近 N 天发布的（0 = 不限）。服务端筛选，比本地过滤准")
     s.add_argument("--keyword", required=True)
     s.add_argument("--order", default="click")
     s.add_argument("--limit", type=int, default=10)
