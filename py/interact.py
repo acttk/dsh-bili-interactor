@@ -385,7 +385,7 @@ async def cmd_search(args):
             order_type=order,
             time_start=time_start,
             time_end=time_end,
-            page=1,
+            page=max(1, int(getattr(args, "page", 1) or 1)),
         )
     except Exception as e:
         fail(f"搜索失败：{e}")
@@ -1446,6 +1446,7 @@ def build_parser():
     sub.add_parser("logout")         # 删掉本插件的凭证
 
     s = sub.add_parser("search")
+    s.add_argument("--page", type=int, default=1, help="第几页（B站 每页 42 条）")
     s.add_argument("--days", type=int, default=0,
                    help="只看最近 N 天发布的（0 = 不限）。服务端筛选，比本地过滤准")
     s.add_argument("--keyword", required=True)

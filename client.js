@@ -1843,6 +1843,19 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
               onBlur: (e) => patch({ minPlay: Math.max(0, Number(e.target.value) || 0) }, '播放下限'),
             })),
           h('div', { 'data-bi-row': '' },
+            h('div', { style: { flex: '1 1 auto' } },
+              h('div', { 'data-bi-lab': '' }, '每个关键词最多翻几页'),
+              h('div', { 'data-bi-note': '', style: { lineHeight: 1.75 } },
+                'B站 搜索每页 42 条。以前只搜第 1 页 —— 刷过的视频攒多了（比如 196 条）' +
+                '就会永远空手，因为 4 个词 × 42 = 168 条上限根本不够。' +
+                '现在只在「没刷过的候选不够」时才往后翻，够了就停。' +
+                '填 3 = 最多看 126 条/词；填 1 = 只搜首页（省请求，但容易空手）。')),
+            h('input', {
+              'data-bi-input': '', type: 'number', min: 1, max: 10,
+              defaultValue: String(cfg.searchPages ?? 3),
+              onBlur: (e) => patch({ searchPages: Math.max(1, Math.min(10, Number(e.target.value) || 3)) }, '翻页数'),
+            })),
+          h('div', { 'data-bi-row': '' },
             h('div', null,
               h('div', { 'data-bi-lab': '' }, '只要最近几天发的'),
               h('div', { 'data-bi-note': '' }, '0 = 不限；太老的不碰')),
