@@ -182,6 +182,8 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
       const [visScan, setVisScan] = React.useState(null)
       // 不想理的人（按视频 + 用户）
       const [ignored, setIgnored] = React.useState([])
+      // 「立刻检查一次」的本地锁：请求可能跑几分钟，防止连点
+      const [backLock, setBackLock] = React.useState(false)
       // 「碰过的视频」的筛选：全部 / 我说过话的
       const [videoFilter, setVideoFilter] = React.useState('all')
       const [err, setErr] = React.useState('')
@@ -1393,19 +1395,56 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
                 })())),
             h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
               h('button', {
-                'data-bi-btn': '', 'data-variant': 'primary', disabled: busy === 'backnow',
+                'data-bi-btn': '', 'data-variant': 'primary',
+                disabled: busy === 'backnow' || backLock,
                 onClick: async () => {
                   setBusy('backnow')
+                  setBackLock(true)
+                  setMsg('正在翻楼…')
                   try {
-                    const j = await post('/reply-back/now')
-                    if (j && j.ok) {
-                      setMsg(`检查完了：翻了 ${j.threads || 0} 个楼，回了 ${j.sent || 0} 条`)
-                    } else {
-                      setMsg(j?.error || j?.busy ? '正在检查，等它跑完' : '检查失败')
+                    // 后台跑，立刻返回；然后轮询进度，别让界面干等 50 秒
+                    const j = await post('/reply-back/now', { async: true })
+                    if (j && j.busy) {
+                      setMsg('上一轮监听还在跑，等它跑完再点')
+                      setBusy('')
+                      setBackLock(false)
+                      return
                     }
-                    load()
-                  } catch (e) { setMsg('检查失败：' + e) }
-                  finally { setBusy('') }
+                    if (!j || !j.ok) {
+                      setMsg('没跑起来：' + ((j && j.error) || '未知原因'))
+                      setBusy('')
+                      setBackLock(false)
+                      return
+                    }
+                    // 轮询进度
+                    for (let i = 0; i < 400; i++) {
+                      await new Promise((r) => setTimeout(r, 1200))
+                      let st2 = null
+                      try { st2 = await get('/reply-back/now/status') } catch { continue }
+                      if (!st2) continue
+                      if (st2.running) {
+                        setMsg('正在翻楼…已看 ' + (st2.checked || 0) + ' / ' + (st2.threads || '?') +
+                          ' 个楼，回了 ' + (st2.sent || 0) + ' 条')
+                        continue
+                      }
+                      // 跑完了
+                      if (st2.error) {
+                        setMsg('没跑完：' + st2.error)
+                      } else if (st2.checked === 0 && st2.threads === 0) {
+                        setMsg('检查完了：没有需要看的楼（还没发过评论？）')
+                      } else {
+                        setMsg('检查完了：翻了 ' + (st2.threads || 0) + ' 个楼，看了 ' +
+                          (st2.checked || 0) + ' 个，回了 ' + (st2.sent || 0) + ' 条')
+                      }
+                      break
+                    }
+                    await load()
+                  } catch (e) {
+                    setMsg('请求失败：' + e)
+                  } finally {
+                    setBusy('')
+                    setTimeout(() => setBackLock(false), 1200)
+                  }
                 },
               }, busy === 'backnow' ? '正在检查…' : '立刻检查一次'),
               h('button', {
