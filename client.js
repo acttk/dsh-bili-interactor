@@ -625,17 +625,43 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
               }))
             : null
 
-          const statsText = (vs && vs.checked)
-            ? (vs.hidden > 0
-              ? '上次查了 ' + vs.checked + ' 条，其中 ' + vs.hidden + ' 条只有你自己能看到' +
-                (vs.selfOnly ? '（' + vs.selfOnly + ' 条是「审核中或被折叠」）' : '') +
-                '。B站 收了（返回成功）不代表别人刷得到 —— 通常是发得太密或新号被限流。'
-              : '上次查了 ' + vs.checked + ' 条，全部公开可见。')
-            : '还没查过。选个时间段，立刻把所有评论的可见性过一遍。'
+          // 说明文字：把「是什么 / 为什么 / 怎么办」讲清楚
+          const vsChecked = (vs && vs.checked) || 0
+          const vsHidden = (vs && vs.hidden) || 0
+          const vsFolded = (vs && (vs.folded != null ? vs.folded : vs.selfOnly)) || 0
+          const vsGone = (vs && vs.gone) || 0
+          const vsPublic = (vs && vs.publicCnt != null) ? vs.publicCnt : Math.max(0, vsChecked - vsHidden)
 
+          const statsText = vsChecked
+            ? (vsHidden > 0
+              ? '累计查过 ' + vsChecked + ' 条你发出去的评论，其中 ' + vsPublic + ' 条别人刷得到，'
+                + vsHidden + ' 条别人看不到。'
+              : '累计查过 ' + vsChecked + ' 条你发出去的评论，全部别人刷得到。')
+            : '还没查过。选个时间范围点「立即检查」，会逐条去 B站 确认别人能不能看到。'
+
+          // 两类「看不到」分别解释 —— 以前只提了折叠那类，剩下几条凭空消失，看着莫名其妙
+          const breakdown = (vsHidden > 0)
+            ? h('div', { style: { marginTop: 8, lineHeight: 1.85 } },
+              h('div', null, '· ' + vsFolded + ' 条「审核中或被折叠」—— B站 收下了，但只有你自己能看见'),
+              vsGone > 0
+                ? h('div', null, '· ' + vsGone + ' 条「连你也看不到」—— 多半已经被删掉了（自己删的，或被 B站 删的）')
+                : null)
+            : null
+
+          // 该怎么办：给具体动作，别只给空泛建议
           const hint = bad
-            ? h('div', { 'data-bi-note': '', style: { marginTop: 10, lineHeight: 1.8, color: '#fbbf24' } },
-              '建议：把「每条视频最多跟几个人搭话」降到 3~5，间隔拉长，停一两天再刷。被折叠的评论别人刷不到，等于白发。')
+            ? h('div', { 'data-bi-note': '', style: { marginTop: 10, lineHeight: 1.85, color: '#fbbf24' } },
+              '这意味着：这些评论白发 —— 别人在视频下面根本刷不到，等于没说过。',
+              h('br'),
+              '要少被折叠，按顺序试：',
+              h('br'),
+              '1. 把「每条视频最多跟几个人搭话」降到 3~5（现在按 ' + ((st.config && st.config.replyCount) || 2) + ' 条在发）',
+              h('br'),
+              '2. 把「两次动作之间等多久」拉长，别一秒一个',
+              h('br'),
+              '3. 停一两天再刷 —— 账号被判定发得太密，需要冷却',
+              h('br'),
+              '另外注意：内容本身也会导致折叠，攻击性言论几乎必折。毒舌可以，骂人不行。')
             : null
 
           return h('div', {
