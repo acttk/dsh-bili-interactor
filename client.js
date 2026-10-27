@@ -180,6 +180,8 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
       // 可见性批量检查：时间范围 + 进度 + 结果
       const [visHours, setVisHours] = React.useState(24)
       const [visScan, setVisScan] = React.useState(null)
+      // 不想理的人（按视频 + 用户）
+      const [ignored, setIgnored] = React.useState([])
       // 「碰过的视频」的筛选：全部 / 我说过话的
       const [videoFilter, setVideoFilter] = React.useState('all')
       const [err, setErr] = React.useState('')
@@ -982,6 +984,15 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
             }, (e.root && String(e.root) !== String(e.rpid)) ? '跳到来源楼' : '跳到来源评论') : null) : null)
       }
 
+      const loadIgnored = async () => {
+        try {
+          const j = await get('/ignored')
+          if (j && j.ok) setIgnored(j.items || [])
+        } catch { /* ignore */ }
+      }
+
+      React.useEffect(() => { loadIgnored() }, [])
+
       const memory = h('div', null,
         h('div', { 'data-bi-card': '' },
           h('div', { 'data-bi-h2': '' }, '它学到的说话规律（' + (memoSrc.items || []).length + ' / ' + (memoSrc.total || 0) + '）'),
@@ -1105,6 +1116,48 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
       }
 
       const interact = h('div', null,
+        // 不想理的人
+        ignored.length
+          ? h('div', { 'data-bi-card': '', style: { borderColor: 'rgba(251,191,36,.45)' } },
+            h('div', { 'data-bi-h2': '' }, '不再回复的人（' + ignored.length + '）'),
+            h('div', { 'data-bi-note': '', style: { marginBottom: 10, lineHeight: 1.8 } },
+              '这些是在某个视频下聊了太多轮、被判定没营养之后记下来的。' +
+              '不是拉黑 —— 对方照样能评论、能 @ 你，你也照样看得见他的评论；' +
+              '只是插件自己在这个视频下不再回复他。点「恢复回复」可以撤销。'),
+            h('div', { style: { maxHeight: 240, overflowY: 'auto' } },
+              ignored.map((it, i) => h('div', {
+                key: (it.bvid || '') + '#' + (it.uid || '') + i,
+                style: { padding: '9px 0', borderTop: i ? '1px solid var(--bi-line)' : 'none', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' },
+              },
+                h('div', { style: { flex: '1 1 220px' } },
+                  h('div', { style: { fontSize: 13.5 } }, (it.uname || '（没名字）') + '  ·  聊了 ' + (it.rounds || 0) + ' 轮'),
+                  h('div', { 'data-bi-note': '', style: { marginTop: 3 } },
+                    (it.reason ? '原因：' + it.reason + '  ·  ' : '') + (it.bvid || ''))),
+                h('a', {
+                  'data-bi-bv': '', href: 'https://www.bilibili.com/video/' + (it.bvid || '') + '/',
+                  target: '_blank', rel: 'noreferrer', style: { fontSize: 12 },
+                }, '视频'),
+                h('button', {
+                  'data-bi-btn': '', 'data-variant': 'ghost',
+                  style: { padding: '3px 9px', fontSize: 11.5 },
+                  onClick: async () => {
+                    try {
+                      const j = await post('/ignored/delete', { bvid: it.bvid, uid: it.uid })
+                      if (j && j.ok) { setMsg('已恢复，之后可以回复他了'); loadIgnored() } else setMsg('操作失败')
+                    } catch { setMsg('操作失败') }
+                  },
+                }, '恢复回复')))),
+            h('div', { style: { marginTop: 10 } },
+              h('button', {
+                'data-bi-btn': '', 'data-variant': 'ghost',
+                onClick: async () => {
+                  try {
+                    const j = await post('/ignored/clear', {})
+                    if (j && j.ok) { setMsg('已全部清空'); loadIgnored() } else setMsg('操作失败')
+                  } catch { setMsg('操作失败') }
+                },
+              }, '全部清空')))
+          : null,
         h('div', { 'data-bi-card': '' },
           h('div', { 'data-bi-h2': '' }, '今天碰过的视频（' + videos.length + '）'),
           h('div', { 'data-bi-note': '', style: { marginTop: 4, marginBottom: 8, lineHeight: 1.7 } },
@@ -1431,6 +1484,26 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
                 onClick: () => { setSaveState({ kind: 'idle', at: 0, note: '', error: '' }); load() },
               }, '重新读取')
             : null),
+
+        /* ── ★ 聊太多就撤：跟同一个人来回刷十几楼没意思 ── */
+        h('div', { 'data-bi-card': '' },
+          h('div', { 'data-bi-h2': '' }, '聊太多就撤'),
+          h('div', { 'data-bi-note': '', style: { marginBottom: 12, lineHeight: 1.8 } },
+            '跟同一个人在同一个视频下来回聊到一定轮数，会先「审查」这段对话：',
+            '有没有新东西、对面像不像真人。判定没营养（比如两边都是 AI 在互相捧场），',
+            '就发最后一句表明不再聊，然后把这个人记下来 —— 之后他在这个视频下再 @ 我、再说话，都不理。'),
+          h('div', { 'data-bi-row': '' },
+            h('div', { style: { flex: '1 1 auto' } },
+              h('div', { 'data-bi-lab': '' }, '聊到多少轮就审查'),
+              h('div', { 'data-bi-note': '', style: { lineHeight: 1.8 } },
+                '按「我在这个视频下回过他几条」算。0 = 关掉这个功能，永远不审查。',
+                h('br'),
+                '建议 8~12。设太小会误伤真正聊得来的真人。')),
+            h('input', {
+              'data-bi-input': '', type: 'number', min: 0, max: 50,
+              defaultValue: cfg.deepTalkLimit,
+              onBlur: (e) => patch({ deepTalkLimit: Math.max(0, Math.min(50, Number(e.target.value) || 0)) }, '审查轮数'),
+            }))),
 
         /* ── ★ 学习：攒笔记，下次说话带上 ── */
         h('div', { 'data-bi-card': '' },
