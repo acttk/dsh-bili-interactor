@@ -177,6 +177,9 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
       const [runLock, setRunLock] = React.useState(false)
       // 保存状态：'idle' | 'saving' | 'saved' | 'error'
       const [saveState, setSaveState] = React.useState({ kind: 'idle', at: 0, note: '', error: '' })
+      // 可见性批量检查：时间范围 + 进度 + 结果
+      const [visHours, setVisHours] = React.useState(24)
+      const [visScan, setVisScan] = React.useState(null)
       // 「碰过的视频」的筛选：全部 / 我说过话的
       const [videoFilter, setVideoFilter] = React.useState('all')
       const [err, setErr] = React.useState('')
@@ -280,6 +283,11 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify(body || {}),
         })
+        return r.json()
+      }
+
+      const get = async (path) => {
+        const r = await fetch(API + path, { credentials: 'same-origin' })
         return r.json()
       }
 
@@ -525,43 +533,122 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
         // ── 可见性：发出去 ≠ 别人看得到 ──
         (() => {
           const vs = st.visStats
-          if (!vs || !vs.checked) return null
-          const bad = vs.hidden > 0
+          const scanning = !!(visScan && visScan.running)
+          const doneItems = (visScan && !visScan.running && Array.isArray(visScan.items)) ? visScan.items : null
+          const bad = (vs && vs.hidden > 0) || !!(doneItems && doneItems.length)
+
+          const runScan = async () => {
+            setVisScan({ running: true, done: 0, total: 0 })
+            setMsg('开始查可见性…')
+            try {
+              const j = await post('/visibility/scan', { hours: visHours })
+              if (!j || !j.ok) {
+                setVisScan(null)
+                setMsg(j && j.busy ? '上一次检查还没跑完' : ('启动失败：' + ((j && j.error) || '未知')))
+                return
+              }
+              for (let i = 0; i < 600; i++) {
+                await new Promise((r) => setTimeout(r, 1500))
+                let st2 = null
+                try { st2 = await get('/visibility/scan/status') } catch { /* ignore */ }
+                if (!st2) continue
+                setVisScan(st2)
+                if (!st2.running) {
+                  setMsg(st2.message || '检查完成')
+                  await load()
+                  return
+                }
+              }
+            } catch (e) {
+              setMsg('检查失败：' + e)
+              setVisScan(null)
+            }
+          }
+
+          // 单条结果
+          const oneItem = (it, i) => h('div', {
+            key: String(it.rpid) + '-' + i,
+            style: { padding: '8px 0', borderTop: i ? '1px solid var(--bi-line)' : 'none' },
+          },
+            h('div', { style: { fontSize: 12.5, color: 'var(--bi-dim)', marginBottom: 3 } },
+              (it.title || it.bvid || '') + '  ·  ' + (KIND_LABEL[it.kind] || it.kind || '')),
+            h('div', { style: { fontSize: 13.5, lineHeight: 1.7, wordBreak: 'break-word' } },
+              it.text || '（没记正文）'),
+            h('div', { style: { marginTop: 5, display: 'flex', gap: 8, flexWrap: 'wrap' } },
+              h('a', {
+                'data-bi-bv': '', href: it.url, target: '_blank', rel: 'noreferrer',
+                style: { fontSize: 12 },
+              }, '去看看'),
+              h('button', {
+                'data-bi-btn': '', 'data-variant': 'ghost',
+                style: { padding: '2px 8px', fontSize: 11.5 },
+                onClick: () => copyText(it.url),
+              }, '复制链接')))
+
+          const doneList = (doneItems && doneItems.length)
+            ? h('div', { style: { marginTop: 12 } },
+              h('div', { 'data-bi-lab': '', style: { marginBottom: 6 } },
+                '这段时间里有 ' + doneItems.length + ' 条别人看不到：'),
+              h('div', { style: { maxHeight: 260, overflowY: 'auto' } }, doneItems.map(oneItem)))
+            : null
+
+          const progress = (scanning && visScan.total)
+            ? h('div', { style: { marginTop: 8, height: 4, background: 'rgba(255,255,255,.1)', borderRadius: 2 } },
+              h('div', {
+                style: {
+                  height: '100%', borderRadius: 2, background: '#4ade80',
+                  width: Math.round(((visScan.done || 0) / visScan.total) * 100) + '%',
+                  transition: 'width .3s',
+                },
+              }))
+            : null
+
+          const statsText = (vs && vs.checked)
+            ? (vs.hidden > 0
+              ? '上次查了 ' + vs.checked + ' 条，其中 ' + vs.hidden + ' 条只有你自己能看到' +
+                (vs.selfOnly ? '（' + vs.selfOnly + ' 条是「审核中或被折叠」）' : '') +
+                '。B站 收了（返回成功）不代表别人刷得到 —— 通常是发得太密或新号被限流。'
+              : '上次查了 ' + vs.checked + ' 条，全部公开可见。')
+            : '还没查过。选个时间段，立刻把所有评论的可见性过一遍。'
+
+          const hint = bad
+            ? h('div', { 'data-bi-note': '', style: { marginTop: 10, lineHeight: 1.8, color: '#fbbf24' } },
+              '建议：把「每条视频最多跟几个人搭话」降到 3~5，间隔拉长，停一两天再刷。被折叠的评论别人刷不到，等于白发。')
+            : null
+
           return h('div', {
             'data-bi-card': '',
             style: bad ? { borderColor: 'rgba(248,113,113,.5)' } : null,
           },
             h('div', { 'data-bi-h2': '', style: bad ? { color: '#f87171' } : null },
-              bad ? '⚠️ 有 ' + vs.hidden + ' 条别人看不到' : '✓ 发出去的评论都是公开的'),
-            h('div', { 'data-bi-note': '', style: { lineHeight: 1.8 } },
-              bad
-                ? '查了 ' + vs.checked + ' 条，其中 ' + vs.hidden + ' 条只有你自己能看到' +
-                  (vs.selfOnly ? '（' + vs.selfOnly + ' 条是「审核中或被折叠」）' : '') +
-                  '。B站 收了（返回成功）不代表别人刷得到 —— 这通常是发得太密或新号被限流。'
-                : '查了 ' + vs.checked + ' 条，全部公开可见。'),
-            bad
-              ? h('div', { 'data-bi-note': '', style: { marginTop: 6, lineHeight: 1.8, color: '#fbbf24' } },
-                  '建议：把「每条视频最多回几条」降到 3~5，间隔拉长，停一两天再刷。')
-              : null,
-            h('div', { style: { marginTop: 8 } },
+              bad ? '⚠️ 有别人看不到的评论' : '✓ 发出去的评论都是公开的'),
+            h('div', { 'data-bi-note': '', style: { lineHeight: 1.8 } }, statsText),
+            h('div', { style: { marginTop: 12, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' } },
+              h('span', { 'data-bi-note': '' }, '查最近'),
+              h('select', {
+                'data-bi-input': '', style: { width: 130 },
+                value: String(visHours),
+                disabled: scanning,
+                onChange: (e) => setVisHours(Number(e.target.value)),
+              },
+                h('option', { value: '1' }, '1 小时'),
+                h('option', { value: '6' }, '6 小时'),
+                h('option', { value: '24' }, '24 小时'),
+                h('option', { value: '72' }, '3 天'),
+                h('option', { value: '168' }, '7 天'),
+                h('option', { value: '0' }, '全部历史')),
               h('button', {
-                'data-bi-btn': '', 'data-variant': 'ghost',
-                style: { padding: '4px 11px', fontSize: 12 },
-                disabled: busy === 'vis',
-                onClick: async () => {
-                  setBusy('vis')
-                  setMsg('正在查最近 10 条…')
-                  try {
-                    const j = await post('/visibility/check', { limit: 10 })
-                    if (j && j.ok) {
-                      setVis(j.map || {})
-                      setMsg('查了 ' + j.checked + ' 条：' + j.hidden + ' 条别人看不到')
-                      await load()
-                    } else setMsg('检查失败')
-                  } catch (e) { setMsg('检查失败：' + e) }
-                  finally { setBusy('') }
-                },
-              }, busy === 'vis' ? '检查中…' : '重新检查')))
+                'data-bi-btn': '', 'data-variant': 'primary',
+                disabled: scanning,
+                onClick: runScan,
+              }, scanning ? '检查中…' : '立即检查'),
+              scanning
+                ? h('span', { 'data-bi-note': '', style: { color: '#fbbf24' } },
+                  '已查 ' + (visScan.done || 0) + ' / ' + (visScan.total || '?') + ' 个楼')
+                : null),
+            progress,
+            doneList,
+            hint)
         })(),
 
         // ── 环境状态：全绿时只占一行，别摆一张检查表让人数 ──

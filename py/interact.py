@@ -1154,6 +1154,88 @@ async def cmd_visible(args):
     })
 
 
+async def cmd_visible_thread(args):
+    """查一个楼里「我发的所有评论」哪些别人看不见。
+
+    为什么要按楼查而不是按条查：visible 每条要发 3 个请求
+    （查 aid + 带 cookie 拉 + 匿名拉）。用户要一次查最近 24 小时的全部评论，
+    按条查 200 条 = 600 个请求，直接触发风控。
+    按楼分组后：一个楼只拉 2 次，楼里我有多少条都能一起判断。
+
+    返回 {ok, bvid, root, mine_self:[rpid], mine_public:[rpid], hidden:[rpid]}
+    """
+    import httpx
+
+    cred = load_credential()
+    bvid = args.bvid
+    root = str(args.root)
+    my_uid = str(getattr(cred, "dedeuserid", "") or "")
+
+    ua = _ua_headers()
+
+    async def aid_of():
+        async with httpx.AsyncClient(timeout=15, headers=ua) as c:
+            r = await c.get("https://api.bilibili.com/x/web-interface/view", params={"bvid": bvid})
+            j = r.json()
+            return (j.get("data") or {}).get("aid")
+
+    async def replies(aid, with_cred):
+        cookies = {}
+        if with_cred:
+            cookies = {
+                "SESSDATA": getattr(cred, "sessdata", "") or "",
+                "bili_jct": getattr(cred, "bili_jct", "") or "",
+                "DedeUserID": str(getattr(cred, "dedeuserid", "") or ""),
+                "buvid3": getattr(cred, "buvid3", "") or "",
+            }
+        items = []
+        async with httpx.AsyncClient(timeout=15, headers=ua, cookies=cookies) as c:
+            # 子评论可能不止一页，最多翻 3 页（60 条）
+            for pn in (1, 2, 3):
+                r = await c.get(
+                    "https://api.bilibili.com/x/v2/reply/reply",
+                    params={"oid": aid, "type": 1, "root": int(root), "ps": 20, "pn": pn},
+                )
+                j = r.json()
+                d = j.get("data") or {}
+                batch = d.get("replies") or []
+                for x in batch:
+                    items.append({
+                        "rpid": str(x.get("rpid")),
+                        "uid": str((x.get("member") or {}).get("mid") or ""),
+                    })
+                if len(batch) < 20:
+                    break
+        return items
+
+    try:
+        aid = await aid_of()
+        if not aid:
+            fail("拿不到 aid（视频不存在或接口变了）")
+        self_items = await replies(aid, True)
+        pub_items = await replies(aid, False)
+    except Exception as e:
+        fail(f"查可见性失败：{e}")
+
+    pub_ids = {x["rpid"] for x in pub_items}
+    mine_self = [x["rpid"] for x in self_items if my_uid and x["uid"] == my_uid]
+    mine_public = [x for x in mine_self if x in pub_ids]
+    hidden = [x for x in mine_self if x not in pub_ids]
+
+    out({
+        "ok": True,
+        "bvid": bvid,
+        "root": root,
+        "mine_self": mine_self,
+        "mine_public": mine_public,
+        "hidden": hidden,
+        "selfCount": len(self_items),
+        "publicCount": len(pub_items),
+        "hint": ("这个楼里我有 %d 条，其中 %d 条别人看不到" % (len(mine_self), len(hidden)))
+                if mine_self else "这个楼里没找到我发的评论",
+    })
+
+
 async def cmd_sub_replies(args):
     """读某条评论下面的子评论（谁回了我）。
 
@@ -1411,6 +1493,10 @@ def build_parser():
     dg.add_argument("--max-danmaku", type=int, default=40)
     dg.add_argument("--max-subtitle-chars", type=int, default=2000)
 
+    vt = sub.add_parser("visible-thread")     # 查一个楼里我所有评论的可见性（只读）
+    vt.add_argument("--bvid", required=True)
+    vt.add_argument("--root", required=True)
+
     vs = sub.add_parser("visible")            # 查某条评论别人看不看得见（只读）
     vs.add_argument("--bvid", required=True)
     vs.add_argument("--rpid", required=True)
@@ -1444,6 +1530,7 @@ CMDS = {
     "comments": cmd_comments,
     "sub-replies": cmd_sub_replies,
     "visible": cmd_visible,
+    "visible-thread": cmd_visible_thread,
     "watch": cmd_watch,
     "transcribe": cmd_transcribe,
     "doctor": cmd_doctor,
