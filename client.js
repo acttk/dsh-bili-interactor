@@ -304,8 +304,12 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
           const j = await post('/run')
           if (j && j.started) {
             setMsg('跑起来了 —— 切到「过程」看它在干什么')
+          } else if (j && j.queued) {
+            // 监听在跑，已排队；等它结束会自动开始，用户不用再点
+            setMsg(j.already
+              ? '已经在排队了，监听这轮结束就自动开始'
+              : '监听正在跑，已排队 —— 它这轮结束就自动开始，不用再点')
           } else if (j && j.busy) {
-            // 把真实原因显示出来（以前只说「上一轮还没跑完」，而实际常是监听在跑）
             setMsg(j.error || '上一轮还没跑完')
           } else {
             setMsg('没跑起来：' + ((j && j.error) || '未知原因'))
@@ -314,7 +318,6 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
           setMsg('请求失败：' + e)
         } finally {
           setBusy('')
-          // 立刻拉一次真实状态，别等 2 秒轮询（用户会以为没反应）
           try { await load() } catch { /* ignore */ }
           setTimeout(() => setRunLock(false), 800)
         }
@@ -798,7 +801,7 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
             h('button', {
               'data-bi-btn': '', 'data-variant': 'primary', disabled: busy === 'run' || runLock || running,
               onClick: onRun,
-            }, running ? '正在跑…' : '现在跑一轮'),
+            }, running ? '正在跑…' : (st.run && st.run.runQueued ? '排队中…' : '现在跑一轮')),
             running ? h('button', {
               'data-bi-btn': '', 'data-variant': 'ghost', disabled: busy === 'stop', onClick: onStop,
             }, '停下') : null),
