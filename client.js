@@ -1213,7 +1213,7 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
             '话题是他开的，我是插话的。只在跑一轮时做，每条视频最多「上面设的条数」。',
             h('br'),
             '· ', h('b', null, '接着回'), ' = 别人回的是我发过的评论，等于在跟我说话。' +
-            '这才算对话，由后台监听每分钟检查。'),
+            '这才算对话，由后台监听每 ' + Math.max(1, Number(cfg.listenIntervalMin) || 1) + ' 分钟检查一次。'),
           videos.length
             ? h('div', { style: { display: 'flex', gap: 8, marginBottom: 6, flexWrap: 'wrap' } },
                 VIDEO_FILTER.map(([k, lab]) => h('button', {
@@ -1369,23 +1369,37 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
               onBlur: (e) => patch({ listenIntervalMin: Math.max(1, Number(e.target.value) || 1) }, '检查间隔'),
             })),
           h('div', { 'data-bi-row': '' },
-            h('div', { style: { flex: '1 1 auto' } },
-              h('div', { 'data-bi-lab': '' }, '每次检查看几条我的评论'),
+              h('div', { style: { flex: '1 1 auto' } },
+              h('div', { 'data-bi-lab': '' }, '每次检查看几个楼'),
               h('div', { 'data-bi-note': '', style: { lineHeight: 1.75 } },
-                '你发过的每条评论算一条，它下面别人回的都挂在它下面。' +
+                '按「楼」算，不按条算：你在某条视频下发的一条评论 + 它下面所有人的回复 = 1 个楼。' +
+                '同一个楼里你回了十几条也只算 1 个，因为查一次就全看到了。' +
                 (() => {
                   const total = (st.listener && st.listener.totalThreads) || 0
                   const per = Math.max(1, Number(cfg.listenMaxThreadsPerTick) || 15)
+                  const every = Math.max(1, Number(cfg.listenIntervalMin) || 1)
                   if (!total) return ''
+                  // 每轮本身的耗时：优先用实测值，没跑过就按「每个楼约 1.5 秒」估
+                  const last = (st.listener && st.listener.last) || {}
+                  const costSec = last.costMs ? last.costMs / 1000 : Math.min(per, total) * 1.5
+                  const costMin = Math.max(0.1, costSec / 60)
                   if (per >= total) {
-                    return `你现在有 ${total} 条，每次全看（一轮就查完）。`
+                    // 一轮就查完：一圈 = 一轮耗时 + 间隔
+                    const cycle = costMin + every
+                    return `你现在有 ${total} 个楼，一次就全看完了（不轮转）。` +
+                      `每 ${every} 分钟查一次，每次要跑约 ${costMin.toFixed(1)} 分钟，` +
+                      `所以新回复最多晚 ${cycle.toFixed(0)} 分钟被发现。`
                   }
                   const rounds = Math.ceil(total / per)
-                  return `你现在有 ${total} 条，每次看 ${per} 条，${rounds} 分钟轮完一圈` +
-                    `（不会漏，剩下的下一次接着看；新回复最多晚 ${rounds} 分钟被发现）。`
+                  const cycle = rounds * (costMin + every)
+                  // 请求速率：一轮发 per 个请求，摊在一轮耗时+间隔里
+                  const perMin = per / (costMin + every)
+                  return `你现在有 ${total} 个楼，每轮看 ${per} 个，要 ${rounds} 轮才轮完一圈。` +
+                    `每轮本身要跑约 ${costMin.toFixed(1)} 分钟，再加 ${every} 分钟间隔，` +
+                    `所以一圈约 ${cycle.toFixed(0)} 分钟（新回复最多晚这么久被发现）。` +
+                    `请求量约每分钟 ${perMin.toFixed(1)} 次。`
                 })() +
-                `设成 ${cfg.listenMaxThreadsPerTick ?? 15} 就意味着每分钟最多 ${cfg.listenMaxThreadsPerTick ?? 15} 次请求，` +
-                '设太大容易被 B站 当脚本。楼不多的话填个比总数大的值也没关系（不会超）。')),
+                '设太大容易被 B站 当脚本；楼不多的话填个比总数大的值也没关系（不会超）。')),
             h('input', {
               'data-bi-input': '', type: 'number', min: 1, max: 100, defaultValue: String(cfg.listenMaxThreadsPerTick ?? 15),
               onBlur: (e) => patch({ listenMaxThreadsPerTick: Math.max(1, Number(e.target.value) || 15) }, '每轮楼数'),
