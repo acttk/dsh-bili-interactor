@@ -430,6 +430,21 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
         }
       }
 
+      // ⚠️ 这个 useEffect 必须放在下面那个提前 return 之前 ——
+      //    hooks 不能在条件分支之后调用，否则第一次渲染（st=null，提前 return）
+      //    不会执行它，第二次渲染才执行，React 会报 hooks 数量不一致并整块崩掉。
+      React.useEffect(() => {
+        let alive = true
+        ;(async () => {
+          try {
+            const r = await fetch(API + '/ignored', { credentials: 'same-origin' })
+            const j = await r.json()
+            if (alive && j && j.ok) setIgnored(j.items || [])
+          } catch { /* 拉不到就不显示，不影响面板 */ }
+        })()
+        return () => { alive = false }
+      }, [])
+
       if (!st) return h('div', { 'data-bi-empty': '' }, err ? '连不上接口：' + err : '读取中…')
 
       const run = st.run || {}
@@ -990,8 +1005,6 @@ const KIND_LABEL = { like: '点赞', coin: '投币', favorite: '收藏', danmaku
           if (j && j.ok) setIgnored(j.items || [])
         } catch { /* ignore */ }
       }
-
-      React.useEffect(() => { loadIgnored() }, [])
 
       const memory = h('div', null,
         h('div', { 'data-bi-card': '' },
